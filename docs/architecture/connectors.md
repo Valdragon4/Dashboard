@@ -335,6 +335,8 @@ L'intégration avec Django (modèles, services, tâches Celery) se fait via les 
 **Spécificités** :
 - Utilise l'API REST pour l'authentification
 - Utilise WebSocket pour récupérer les données (transactions, soldes, portefeuilles)
+- Récupère et applique un contexte de sécurité (WAF token + device info) pour les appels REST via des en-têtes du type `x-aws-waf-token` / `x-tr-device-info`
+- Tente l'authentification initiale avec un navigateur réel (Playwright) pour réduire les `403` côté WAF, puis fallback HTTP si nécessaire
 - Retry automatique avec backoff exponentiel (max 3 tentatives)
 - Transformation automatique des transactions au format standard
 

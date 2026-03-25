@@ -81,6 +81,14 @@ Trade Republic utilise une authentification à deux facteurs (2FA) pour sécuris
 - Vérifiez que votre PIN est correct
 - Assurez-vous que votre compte Trade Republic est actif
 
+**Problème : "403 Forbidden" / pare-feu (WAF)**
+- Ce message apparaît surtout lorsque le dashboard exécute les requêtes depuis un **VPS / cloud** : Trade Republic peut bloquer l’accès à l’API via un pare-feu (WAF), même si l’interface web `app.traderepublic.com` est accessible dans votre navigateur.
+- Le connecteur tente une approche “navigateurs” (Playwright + récupération d’un token WAF) puis fait un fallback, mais le blocage peut persister.
+- Solutions possibles :
+  - Importer via **CSV** ou **PDF** depuis l’interface (menu Trade Republic).
+  - Exécuter le dashboard sur un réseau résidentiel (ou utiliser un **tunnel** / un proxy pour que la sortie Internet passe par votre machine).
+  - Si vous diagnostiquez : vous pouvez désactiver l’étape “Playwright pour l’init” avec `TRADEPUBLIC_USE_PLAYWRIGHT_INITIATE=0` (variable d’environnement).
+
 **Problème : "Session expirée"**
 - Les sessions Trade Republic expirent après un certain temps
 - Vous devrez refaire l'authentification 2FA

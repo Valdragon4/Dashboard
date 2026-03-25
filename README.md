@@ -84,6 +84,11 @@ BANK_SYNC_SCHEDULE_MINUTE=0
 
 # OpenAI (pour import PDF Trade Republic, optionnel)
 OPENAI_API_KEY=your-openai-api-key-here
+
+# Trade Republic (optionnel, debug)
+# 1 = tente d'abord l'init via Playwright (Chromium) + contexte WAF, puis fallback HTTP
+# 0 = désactive l'étape Playwright pour diagnostiquer (peut augmenter la probabilité de 403 sur certains réseaux)
+TRADEPUBLIC_USE_PLAYWRIGHT_INITIATE=1
 ```
 
 **Important** : Générez une clé de chiffrement sécurisée avec :
