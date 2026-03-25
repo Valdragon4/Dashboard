@@ -1,0 +1,73 @@
+# =============================
+# Secrets / environment
+# =============================
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Trade Republic / scrapers configs (souvent contient phone/pin/tokens)
+**/config.ini
+**/config*.ini
+
+# Credentials / tokens (au cas où)
+**/credentials*.json
+**/secrets*.json
+**/*token*.json
+
+# =============================
+# Python
+# =============================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.tox/
+
+# =============================
+# Django / DB / media
+# =============================
+*.sqlite3
+*.db
+db_data/
+media/
+uploads/
+
+# =============================
+# Node / frontend
+# =============================
+node_modules/
+package-lock.json
+yarn.lock
+
+# =============================
+# MkDocs / build artifacts
+# =============================
+site/
+docs/site/
+mkdocs.yml.bak
+
+# =============================
+# Logs / runtime
+# =============================
+*.log
+*.pid
+*.sock
+
+# =============================
+# IDEs / local tooling
+# =============================
+.vscode/
+.idea/
+.DS_Store
+
+# Cursor: on ignore le reste mais on garde les règles (sans secrets)
+.cursor/*
+!.cursor/rules/
+!.cursor/rules/**
+

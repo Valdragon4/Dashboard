@@ -1,0 +1,300 @@
+{% extends 'base.html' %}
+{% load finance_filters %}
+{% block title %}{{ account.name }} - Détails{% endblock %}
+{% block content %}
+  <!-- En-tête -->
+  <div class="mb-8">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+      <div>
+        <div class="flex items-center gap-3 mb-2">
+          <a href="/accounts/" class="text-gray-500 hover:text-gray-700">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+            </svg>
+          </a>
+          <h1 class="text-3xl font-bold text-gray-900">{{ account.name }}</h1>
+        </div>
+        <p class="text-gray-600 ml-9">
+          {{ account.provider|title }} • 
+          {% if account.portfolio_type == 'all' %}
+            Tous les portefeuilles
+          {% elif account.portfolio_type == 'cto' %}
+            Compte-Titres Ordinaire (CTO)
+          {% elif account.portfolio_type == 'pea' %}
+            Plan d'Épargne en Actions (PEA)
+          {% elif account.portfolio_type == 'pea_pme' %}
+            PEA-PME
+          {% else %}
+            Compte d'investissement
+          {% endif %}
+        </p>
+      </div>
+    </div>
+
+    <!-- Sélecteur de date de valorisation -->
+    <div class="bg-white rounded-xl shadow-md p-6 mb-6">
+      <form method="get" class="flex flex-wrap items-end gap-4">
+        <div class="flex flex-col gap-1">
+          <label for="valuation_date" class="text-sm font-medium text-gray-700">
+            📅 Date de valorisation
+          </label>
+          <input 
+            type="date" 
+            id="valuation_date" 
+            name="valuation_date" 
+            value="{{ valuation_date }}" 
+            class="border border-gray-300 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent"
+          >
+        </div>
+        <button 
+          type="submit" 
+          class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors shadow-sm"
+        >
+          Appliquer
+        </button>
+        <button 
+          type="button" 
+          onclick="window.location.href='?'" 
+          class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors"
+        >
+          Aujourd'hui
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Vue d'ensemble : Investi vs Valorisation -->
+  <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+    <!-- Montant investi -->
+    <div class="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl p-6 text-white shadow-lg">
+      <div class="text-sm opacity-90 mb-1">💰 Montant investi</div>
+      <div class="text-3xl font-bold">{{ total_invested|floatformat:2 }} €</div>
+      <div class="text-xs opacity-75 mt-2">Depuis les opérations</div>
+    </div>
+
+    <!-- Valorisation actuelle -->
+    <div class="bg-gradient-to-br from-green-500 to-green-600 rounded-xl p-6 text-white shadow-lg">
+      <div class="text-sm opacity-90 mb-1">📈 Valorisation</div>
+      <div class="text-3xl font-bold">{{ total_value|floatformat:2 }} €</div>
+      <div class="text-xs opacity-75 mt-2">Au {{ valuation_date_display }}</div>
+    </div>
+
+    <!-- Plus/Moins-value -->
+    <div class="bg-gradient-to-br {% if gain_loss >= 0 %}from-emerald-500 to-emerald-600{% else %}from-red-500 to-red-600{% endif %} rounded-xl p-6 text-white shadow-lg">
+      <div class="text-sm opacity-90 mb-1">{% if gain_loss >= 0 %}📊 Plus-value{% else %}📉 Moins-value{% endif %}</div>
+      <div class="text-3xl font-bold">
+        {% if gain_loss >= 0 %}+{% endif %}{{ gain_loss|floatformat:2 }} €
+      </div>
+      <div class="text-lg opacity-90 mt-1">
+        {% if gain_loss_percent >= 0 %}+{% endif %}{{ gain_loss_percent|floatformat:2 }}%
+      </div>
+    </div>
+  </div>
+
+  <!-- Holdings par portefeuille -->
+  {% for portfolio_type, holdings in holdings_by_portfolio.items %}
+  <div class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden mb-6">
+    <!-- En-tête du portefeuille -->
+    <div class="bg-gradient-to-r {% if portfolio_type == 'CTO' %}from-blue-500 to-blue-600{% elif portfolio_type == 'PEA' %}from-green-500 to-green-600{% elif portfolio_type == 'PEA-PME' %}from-purple-500 to-purple-600{% elif portfolio_type == 'CRYPTO' %}from-orange-500 to-orange-600{% else %}from-gray-500 to-gray-600{% endif %} px-6 py-4 text-white">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-xl font-bold">
+            {% if portfolio_type == 'CTO' %}
+              📊 Compte-Titres Ordinaire (CTO)
+            {% elif portfolio_type == 'PEA' %}
+              🌱 Plan d'Épargne en Actions (PEA)
+            {% elif portfolio_type == 'PEA-PME' %}
+              🏢 PEA-PME
+            {% elif portfolio_type == 'CRYPTO' %}
+              ₿ Cryptomonnaies
+            {% else %}
+              📈 {{ portfolio_type }}
+            {% endif %}
+          </h2>
+          <p class="text-sm opacity-90 mt-1">{{ holdings|length }} {% if portfolio_type == 'CRYPTO' %}crypto(s){% else %}titre(s){% endif %}</p>
+        </div>
+        <div class="text-right">
+          <div class="text-sm opacity-90">Valorisation</div>
+          <div class="text-2xl font-bold">{{ portfolio_totals|get_item:portfolio_type|floatformat:2 }} €</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Table des holdings -->
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Symbole</th>
+            <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Nom</th>
+            <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Type</th>
+            <th class="px-6 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Quantité</th>
+            <th class="px-6 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Prix unitaire</th>
+            <th class="px-6 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Valeur</th>
+            <th class="px-6 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">% Portfolio</th>
+          </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200">
+          {% for holding in holdings %}
+          <tr class="hover:bg-gray-50 transition-colors">
+            <td class="px-6 py-4 whitespace-nowrap">
+              <div class="text-sm font-mono font-semibold text-gray-900">{{ holding.symbol }}</div>
+            </td>
+            <td class="px-6 py-4">
+              <div class="text-sm text-gray-900 max-w-md truncate">{{ holding.name }}</div>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap">
+              <span class="px-2 py-1 text-xs font-medium rounded-full {% if holding.instrument_type == 'stock' or holding.instrument_type == 'action' %}bg-blue-100 text-blue-800{% elif holding.instrument_type == 'etf' %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-800{% endif %}">
+                {{ holding.instrument_type|upper }}
+              </span>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-700">
+              {{ holding.quantity|floatformat:4 }}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-700">
+              {{ holding.unit_price|floatformat:2 }} €
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold text-gray-900">
+              {{ holding.total_value|floatformat:2 }} €
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right text-sm text-gray-600">
+              {% widthratio holding.total_value portfolio_totals|get_item:portfolio_type 100 %}%
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot class="bg-gray-50">
+          <tr class="font-semibold">
+            <td colspan="5" class="px-6 py-4 text-right text-sm text-gray-900">
+              Total {{ portfolio_type }}
+            </td>
+            <td class="px-6 py-4 text-right text-sm text-gray-900">
+              {{ portfolio_totals|get_item:portfolio_type|floatformat:2 }} €
+            </td>
+            <td class="px-6 py-4 text-right text-sm text-gray-600">
+              100%
+            </td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+  {% empty %}
+  <!-- Aucun holding -->
+  <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-12 text-center mb-6">
+    <svg class="mx-auto h-16 w-16 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+    </svg>
+    <h3 class="text-xl font-semibold text-gray-900 mb-2">Aucun titre dans ce compte</h3>
+    <p class="text-gray-600 mb-6">Importez un PDF Trade Republic pour voir la composition de votre portefeuille</p>
+    <a href="/settings/" class="inline-block px-6 py-3 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark transition-colors">
+      Aller aux paramètres
+    </a>
+  </div>
+  {% endfor %}
+
+  <!-- Opérations d'investissement (Compte espèces) -->
+  <div class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden mb-6">
+    <!-- En-tête -->
+    <div class="bg-gradient-to-r from-orange-500 to-orange-600 px-6 py-4 text-white">
+      <div class="flex items-center justify-between">
+        <div>
+          <h2 class="text-xl font-bold">💵 Opérations d'investissement (Compte espèces)</h2>
+          <p class="text-sm opacity-90 mt-1">{{ transaction_count }} transaction(s) • Montant total investi : {{ total_invested|floatformat:2 }} €</p>
+        </div>
+        {% if transactions %}
+        <form method="post" action="{% url 'delete_all_investment_transactions' account.id %}" onsubmit="return confirm('⚠️ Êtes-vous sûr de vouloir supprimer TOUTES les opérations d\'investissement ? Cette action est irréversible.');" class="inline">
+          {% csrf_token %}
+          <button type="submit" class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors shadow-md flex items-center gap-2">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+            </svg>
+            Supprimer tout
+          </button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Table des opérations -->
+    {% if transactions %}
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gray-50">
+          <tr>
+            <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Date</th>
+            <th class="px-6 py-3 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Description</th>
+            <th class="px-6 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Montant</th>
+            <th class="px-6 py-3 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Type</th>
+            <th class="px-6 py-3 text-center text-xs font-semibold text-gray-700 uppercase tracking-wider">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200">
+          {% for transaction in transactions %}
+          <tr class="hover:bg-gray-50 transition-colors">
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+              {{ transaction.posted_at|date:"d/m/Y H:i" }}
+            </td>
+            <td class="px-6 py-4">
+              <div class="text-sm text-gray-900 max-w-md">{{ transaction.description }}</div>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right">
+              <span class="text-sm font-semibold {% if transaction.amount > 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                {% if transaction.amount > 0 %}+{% endif %}{{ transaction.amount|floatformat:2 }} €
+              </span>
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-right">
+              {% if transaction.amount > 0 %}
+                <span class="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800">
+                  Dépôt
+                </span>
+              {% else %}
+                <span class="px-2 py-1 text-xs font-medium rounded-full bg-blue-100 text-blue-800">
+                  Achat
+                </span>
+              {% endif %}
+            </td>
+            <td class="px-6 py-4 whitespace-nowrap text-center">
+              <form method="post" action="{% url 'transaction_delete' transaction.id %}" onsubmit="return confirm('Supprimer cette transaction ?');" class="inline">
+                {% csrf_token %}
+                <input type="hidden" name="return_to" value="account_detail">
+                <input type="hidden" name="account_id" value="{{ account.id }}">
+                <button type="submit" class="text-red-600 hover:text-red-800 hover:bg-red-50 p-2 rounded transition-colors" title="Supprimer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                  </svg>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot class="bg-gray-50">
+          <tr class="font-semibold">
+            <td colspan="2" class="px-6 py-4 text-right text-sm text-gray-900">
+              Total investi (net)
+            </td>
+            <td class="px-6 py-4 text-right text-sm text-gray-900">
+              {{ total_invested|floatformat:2 }} €
+            </td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    {% else %}
+    <!-- Aucune opération -->
+    <div class="p-12 text-center text-gray-500">
+      <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+      </svg>
+      <p class="text-lg font-medium">Aucune opération enregistrée</p>
+      <p class="text-sm mt-2">Les opérations d'investissement apparaîtront ici</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Répartition graphique (TODO: à implémenter avec Chart.js si souhaité) -->
+  
+{% endblock %}
+

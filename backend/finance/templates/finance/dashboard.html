@@ -1,0 +1,1287 @@
+{% extends 'base.html' %}
+{% load static %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
+  
+  <!-- Style pour masquer les montants -->
+  <style>
+    .amounts-hidden .amount-value {
+      filter: blur(8px);
+      user-select: none;
+      transition: filter 0.3s ease;
+    }
+    .amounts-hidden .amount-value:hover {
+      filter: blur(8px);
+    }
+    .amount-value {
+      transition: filter 0.3s ease;
+    }
+  </style>
+
+  <!-- Header avec sélection de période -->
+  <div class="mb-8">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+      <div class="flex items-center gap-4">
+        <div>
+          <h1 class="text-3xl font-bold text-gray-900 mb-2">Dashboard</h1>
+          <p class="text-gray-600">{{ period_label|capfirst }}</p>
+        </div>
+        <!-- Bouton pour masquer/afficher les montants -->
+        <button id="toggleAmountsBtn" onclick="toggleAmounts()" 
+                class="p-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-800 transition-colors"
+                title="Masquer/Afficher les montants">
+          <svg id="eyeOpenIcon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+          </svg>
+          <svg id="eyeClosedIcon" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path>
+          </svg>
+        </button>
+      </div>
+      
+      <!-- Formulaire de sélection de période -->
+      <form method="get" id="periodForm" class="flex flex-col gap-3">
+        
+        <!-- Toggle: Sélection rapide / Période personnalisée -->
+        <div class="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
+          <button type="button" id="quickSelectBtn" onclick="togglePeriodMode('quick')" 
+                  class="flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors {% if not is_custom_period %}bg-white text-primary shadow-sm{% else %}text-gray-600 hover:text-gray-900{% endif %}">
+            📅 Sélection rapide
+          </button>
+          <button type="button" id="customSelectBtn" onclick="togglePeriodMode('custom')" 
+                  class="flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors {% if is_custom_period %}bg-white text-primary shadow-sm{% else %}text-gray-600 hover:text-gray-900{% endif %}">
+            🗓️ Période personnalisée
+          </button>
+        </div>
+        
+        <!-- Mode 1: Sélection rapide par mois (du 24 au 24) -->
+        <div id="quickSelectMode" class="flex flex-wrap items-end gap-3 {% if is_custom_period %}hidden{% endif %}">
+          <div class="flex flex-col gap-1">
+            <label for="month" class="text-xs font-medium text-gray-700">Sélectionnez un mois</label>
+            <input type="month" id="month" name="month" value="{% if selected_month %}{{ selected_month }}{% else %}{{ start_date|slice:':7' }}{% endif %}" 
+                   class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
+          </div>
+          <button type="submit" class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors shadow-sm">
+            Appliquer
+          </button>
+          <button type="button" onclick="setCurrentMonth()" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors">
+            Mois actuel
+          </button>
+          <span class="text-xs text-gray-500 flex items-center">
+            💡 Du 24 du mois précédent au 24 du mois sélectionné
+          </span>
+        </div>
+        
+        <!-- Mode 2: Période personnalisée -->
+        <div id="customSelectMode" class="flex flex-wrap items-end gap-3 {% if not is_custom_period %}hidden{% endif %}">
+          <div class="flex flex-col gap-1">
+            <label for="start_date" class="text-xs font-medium text-gray-700">Date de début</label>
+            <input type="date" id="start_date" name="start_date" value="{{ start_date }}" 
+                   class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
+          </div>
+          <div class="flex flex-col gap-1">
+            <label for="end_date" class="text-xs font-medium text-gray-700">Date de fin</label>
+            <input type="date" id="end_date" name="end_date" value="{{ end_date }}" 
+                   class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
+          </div>
+          <button type="submit" class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors shadow-sm">
+            Appliquer
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Cartes principales de métriques -->
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+    <!-- Solde courant -->
+    <div class="bg-gradient-to-br from-primary to-primary-dark rounded-2xl shadow-lg p-6 text-white">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-primary-light text-sm font-medium">Solde courant</span>
+        <svg class="w-6 h-6 text-primary-light" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+        </svg>
+      </div>
+      <div class="text-3xl font-bold mb-1"><span class="amount-value">{{ checking_balance|floatformat:2 }} €</span></div>
+      <div class="text-xs text-primary-light">
+        {% if period_balance >= 0 %}
+          <span class="text-green-300 amount-value">+{{ period_balance|floatformat:2 }} €</span>
+        {% else %}
+          <span class="text-red-300 amount-value">{{ period_balance|floatformat:2 }} €</span>
+        {% endif %}
+        cette période
+      </div>
+    </div>
+
+    <!-- Épargne -->
+    <div class="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl shadow-lg p-6 text-white">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-blue-200 text-sm font-medium">Épargne</span>
+        <svg class="w-6 h-6 text-blue-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+        </svg>
+      </div>
+      <div class="text-3xl font-bold mb-1"><span class="amount-value">{{ savings_balance|floatformat:2 }} €</span></div>
+      <div class="text-xs text-blue-200">
+        Livrets d'épargne
+      </div>
+    </div>
+
+    <!-- Revenus -->
+    <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 hover:shadow-xl transition-shadow">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-gray-600 text-sm font-medium">Revenus</span>
+        <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">
+          <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+          </svg>
+        </div>
+      </div>
+      <div class="text-3xl font-bold text-gray-900 mb-1"><span class="amount-value">{{ income|floatformat:2 }} €</span></div>
+      <div class="flex items-center text-xs">
+        {% if income_trend >= 0 %}
+          <span class="text-green-600 font-medium amount-value">+{{ income_trend|floatformat:1 }}%</span>
+        {% else %}
+          <span class="text-red-600 font-medium amount-value">{{ income_trend|floatformat:1 }}%</span>
+        {% endif %}
+        <span class="text-gray-500 ml-1">vs période précédente</span>
+      </div>
+    </div>
+
+    <!-- Dépenses -->
+    <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 hover:shadow-xl transition-shadow">
+      <div class="flex items-center justify-between mb-2">
+        <span class="text-gray-600 text-sm font-medium">Dépenses</span>
+        <div class="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
+          <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"></path>
+          </svg>
+        </div>
+      </div>
+      <div class="text-3xl font-bold text-gray-900 mb-1"><span class="amount-value">{{ expenses|floatformat:2 }} €</span></div>
+      <div class="flex items-center text-xs">
+        {% if expense_trend >= 0 %}
+          <span class="text-red-600 font-medium amount-value">+{{ expense_trend|floatformat:1 }}%</span>
+        {% else %}
+          <span class="text-green-600 font-medium amount-value">{{ expense_trend|floatformat:1 }}%</span>
+        {% endif %}
+        <span class="text-gray-500 ml-1">vs période précédente</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Patrimoine total et Investissements -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+    <!-- Patrimoine total -->
+    <div class="bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl shadow-lg p-6 text-white">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-bold">Patrimoine total</h2>
+        <svg class="w-8 h-8 text-purple-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+        </svg>
+      </div>
+      <div class="text-4xl font-bold mb-4"><span class="amount-value">{{ total_wealth|floatformat:2 }} €</span></div>
+      <div class="space-y-2 text-sm">
+        <div class="flex items-center justify-between pb-2 border-b border-purple-400/30">
+          <span class="text-purple-200">Solde courant</span>
+          <span class="font-semibold amount-value">{{ checking_balance|floatformat:2 }} €</span>
+        </div>
+        <div class="flex items-center justify-between pb-2 border-b border-purple-400/30">
+          <span class="text-purple-200">Épargne</span>
+          <span class="font-semibold amount-value">{{ savings_balance|floatformat:2 }} €</span>
+        </div>
+        <div class="flex items-center justify-between">
+          <span class="text-purple-200">Investissements</span>
+          <span class="font-semibold amount-value">{{ current_valuation|floatformat:2 }} €</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Investissements détaillés -->
+    <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-bold text-gray-900">Investissements</h2>
+        <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center">
+          <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+          </svg>
+        </div>
+      </div>
+      <div class="space-y-4">
+        <div>
+          <div class="text-sm text-gray-600 mb-1">Valorisation au {{ valuation_date_display }}</div>
+          <div class="text-3xl font-bold text-gray-900"><span class="amount-value">{{ current_valuation|floatformat:2 }} €</span></div>
+        </div>
+        <div class="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200">
+          <div>
+            <div class="text-xs text-gray-600 mb-1">Montant investi</div>
+            <div class="text-lg font-semibold text-gray-900"><span class="amount-value">{{ total_invested|floatformat:2 }} €</span></div>
+          </div>
+          <div>
+            <div class="text-xs text-gray-600 mb-1">Plus-value</div>
+            <div class="text-lg font-semibold {% if investment_gain >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+              <span class="amount-value">{% if investment_gain >= 0 %}+{% endif %}{{ investment_gain|floatformat:2 }} €</span>
+            </div>
+          </div>
+        </div>
+        <div class="pt-3 border-t border-gray-200">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-sm text-gray-600">Performance</span>
+            <span class="text-xl font-bold {% if investment_gain_percent >= 0 %}text-green-600{% else %}text-red-600{% endif %} amount-value">
+              {% if investment_gain_percent >= 0 %}+{% endif %}{{ investment_gain_percent|floatformat:2 }}%
+            </span>
+          </div>
+          {% if investment_accounts %}
+          <button onclick="openValuationModal()" class="w-full mt-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+            </svg>
+            Mettre à jour la valorisation
+          </button>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Liste des comptes -->
+  <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 mb-8">
+    <h2 class="text-xl font-bold text-gray-900 mb-6">Vos comptes</h2>
+    
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- Comptes courants -->
+      <div>
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center">
+            <svg class="w-4 h-4 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"></path>
+            </svg>
+          </div>
+          <h3 class="text-sm font-semibold text-gray-900">Comptes courants</h3>
+        </div>
+        {% if checking_accounts_list %}
+          <div class="space-y-2">
+            {% for account in checking_accounts_list %}
+            <div class="p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+              <div class="flex items-center justify-between">
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium text-gray-900 truncate">{{ account.name }}</div>
+                  <div class="text-xs text-gray-500 capitalize">{{ account.provider }}</div>
+                </div>
+                <div class="text-sm font-semibold text-gray-900 ml-3 amount-value">{{ account.balance|floatformat:2 }} €</div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="text-sm text-gray-500 italic">Aucun compte courant</p>
+        {% endif %}
+      </div>
+
+      <!-- Livrets d'épargne -->
+      <div>
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center">
+            <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+            </svg>
+          </div>
+          <h3 class="text-sm font-semibold text-gray-900">Livrets & Épargne</h3>
+        </div>
+        {% if savings_accounts_list %}
+          <div class="space-y-2">
+            {% for account in savings_accounts_list %}
+            <div class="p-3 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors">
+              <div class="flex items-center justify-between">
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium text-gray-900 truncate">{{ account.name }}</div>
+                  <div class="text-xs text-gray-500 capitalize">{{ account.provider }}</div>
+                </div>
+                <div class="text-sm font-semibold text-gray-900 ml-3 amount-value">{{ account.balance|floatformat:2 }} €</div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="text-sm text-gray-500 italic">Aucun livret d'épargne</p>
+        {% endif %}
+      </div>
+
+      <!-- Investissements -->
+            <div>
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-8 h-8 bg-purple-100 rounded-lg flex items-center justify-center">
+            <svg class="w-4 h-4 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+            </svg>
+          </div>
+          <h3 class="text-sm font-semibold text-gray-900">Investissements</h3>
+        </div>
+        {% if investment_accounts_list_detailed %}
+          <div class="space-y-2">
+            {% for account in investment_accounts_list_detailed %}
+            <div class="p-3 bg-purple-50 rounded-lg hover:bg-purple-100 transition-colors">
+              <div class="flex items-center justify-between">
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm font-medium text-gray-900 truncate">{{ account.name }}</div>
+                  <div class="text-xs text-gray-500 capitalize">{{ account.provider }}</div>
+                </div>
+                <div class="ml-3">
+                  <div class="text-sm font-semibold text-gray-900 text-right amount-value">{{ account.balance|floatformat:2 }} €</div>
+                  <div class="text-xs text-gray-500 text-right">Investi: <span class="amount-value">{{ account.invested|floatformat:2 }} €</span></div>
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        {% else %}
+          <p class="text-sm text-gray-500 italic">Aucun investissement</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Statistiques avancées -->
+  <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 mb-8">
+    <h2 class="text-xl font-bold text-gray-900 mb-6">Statistiques & Comparaisons</h2>
+    
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+      <!-- Taux d'épargne -->
+      <div class="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-xl p-4 border border-emerald-200">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center">
+            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+          </div>
+          <h3 class="text-sm font-semibold text-gray-900">Taux d'épargne</h3>
+        </div>
+        <div class="text-3xl font-bold {% if savings_rate >= 0 %}text-emerald-600{% else %}text-red-600{% endif %} mb-1">
+          <span class="amount-value">{{ savings_rate|floatformat:1 }}%</span>
+        </div>
+        <div class="text-xs text-gray-600">De vos revenus</div>
+      </div>
+
+      <!-- Moyenne 6 mois -->
+      <div class="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-200">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
+            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+            </svg>
+          </div>
+          <h3 class="text-sm font-semibold text-gray-900">Moyenne 6 mois</h3>
+        </div>
+        <div class="text-2xl font-bold text-gray-900 mb-1"><span class="amount-value">{{ avg_6m_balance|floatformat:0 }} €</span></div>
+        <div class="text-xs text-gray-600">
+          <span class="{% if period_balance >= avg_6m_balance %}text-green-600{% else %}text-red-600{% endif %} font-medium">
+            {% if period_balance >= avg_6m_balance %}+{% endif %}{{ period_balance|floatformat:0|add:"-"|add:avg_6m_balance|floatformat:0 }} € vs moy.
+          </span>
+        </div>
+      </div>
+
+      <!-- Meilleur mois -->
+      {% if best_month %}
+      <div class="bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl p-4 border border-green-200">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-8 h-8 bg-green-500 rounded-lg flex items-center justify-center">
+            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path>
+            </svg>
+          </div>
+          <h3 class="text-sm font-semibold text-gray-900">Meilleur mois</h3>
+        </div>
+        <div class="text-xl font-bold text-green-600 mb-1"><span class="amount-value">{{ best_month.balance|floatformat:0 }} €</span></div>
+        <div class="text-xs text-gray-600">{{ best_month.label }}</div>
+      </div>
+      {% endif %}
+
+      <!-- Pire mois -->
+      {% if worst_month %}
+      <div class="bg-gradient-to-br from-orange-50 to-red-50 rounded-xl p-4 border border-orange-200">
+        <div class="flex items-center gap-2 mb-2">
+          <div class="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
+            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+            </svg>
+          </div>
+          <h3 class="text-sm font-semibold text-gray-900">Pire mois</h3>
+        </div>
+        <div class="text-xl font-bold text-orange-600 mb-1"><span class="amount-value">{{ worst_month.balance|floatformat:0 }} €</span></div>
+        <div class="text-xs text-gray-600">{{ worst_month.label }}</div>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Projection et comparaison détaillée -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+      <!-- Projection mois suivant -->
+      <div class="bg-gradient-to-br from-purple-50 to-pink-50 rounded-xl p-5 border border-purple-200">
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-10 h-10 bg-purple-500 rounded-lg flex items-center justify-center">
+            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+            </svg>
+          </div>
+          <h3 class="text-base font-bold text-gray-900">Projection mois suivant</h3>
+        </div>
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-gray-600">Revenus estimés</span>
+            <span class="text-lg font-semibold text-green-600 amount-value">{{ projected_income|floatformat:0 }} €</span>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-gray-600">Dépenses estimées</span>
+            <span class="text-lg font-semibold text-red-600 amount-value">{{ projected_expenses|floatformat:0 }} €</span>
+          </div>
+          <div class="pt-3 border-t border-purple-200">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-medium text-gray-700">Balance prévue</span>
+              <span class="text-xl font-bold {% if projected_balance >= 0 %}text-purple-600{% else %}text-red-600{% endif %} amount-value">
+                {% if projected_balance >= 0 %}+{% endif %}{{ projected_balance|floatformat:0 }} €
+              </span>
+            </div>
+          </div>
+        </div>
+        <div class="mt-3 text-xs text-gray-500 italic">
+          Basé sur la moyenne des 3 derniers mois
+        </div>
+      </div>
+
+      <!-- Comparaison avec moyennes -->
+      <div class="bg-gradient-to-br from-gray-50 to-slate-50 rounded-xl p-5 border border-gray-200">
+        <div class="flex items-center gap-2 mb-4">
+          <div class="w-10 h-10 bg-slate-600 rounded-lg flex items-center justify-center">
+            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+            </svg>
+          </div>
+          <h3 class="text-base font-bold text-gray-900">Période vs Moyenne 6 mois</h3>
+        </div>
+        <div class="space-y-3">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-gray-600">Revenus</span>
+            <div class="text-right">
+              <div class="text-lg font-semibold text-gray-900 amount-value">{{ income|floatformat:0 }} €</div>
+              <div class="text-xs {% if income >= avg_6m_income %}text-green-600{% else %}text-red-600{% endif %} amount-value">
+                {% if income >= avg_6m_income %}+{% endif %}{{ income|floatformat:0|add:"-"|add:avg_6m_income|floatformat:0 }} € (moy: {{ avg_6m_income|floatformat:0 }} €)
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-gray-600">Dépenses</span>
+            <div class="text-right">
+              <div class="text-lg font-semibold text-gray-900 amount-value">{{ expenses|floatformat:0 }} €</div>
+              <div class="text-xs {% if expenses <= avg_6m_expenses %}text-green-600{% else %}text-red-600{% endif %} amount-value">
+                {% if expenses > avg_6m_expenses %}+{% endif %}{{ expenses|floatformat:0|add:"-"|add:avg_6m_expenses|floatformat:0 }} € (moy: {{ avg_6m_expenses|floatformat:0 }} €)
+              </div>
+            </div>
+          </div>
+          <div class="pt-3 border-t border-gray-200">
+            <div class="flex items-center justify-between">
+              <span class="text-sm font-medium text-gray-700">Différence</span>
+              <div class="text-right">
+                <div class="text-xl font-bold {% if period_balance >= avg_6m_balance %}text-green-600{% else %}text-red-600{% endif %}">
+                  {% if period_balance >= avg_6m_balance %}Meilleur{% else %}Moins bon{% endif %}
+                </div>
+                <div class="text-xs text-gray-600">que la moyenne</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Diagramme de Sankey - Flux de cashflow -->
+  <div class="mb-8">
+    <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-bold text-gray-900">Flux de trésorerie (Cashflow)</h2>
+        <div class="flex items-center gap-6">
+          <div class="text-right">
+            <div class="text-xs text-gray-500">Revenus</div>
+            <div class="text-lg font-bold text-green-600 amount-value" id="sankey-total-income">{{ income|floatformat:2 }} €</div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-gray-500">Dépenses</div>
+            <div class="text-lg font-bold text-red-600 amount-value" id="sankey-total-expenses">{{ expenses|floatformat:2 }} €</div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-gray-500">Balance</div>
+            <div class="text-lg font-bold {% if period_balance >= 0 %}text-green-600{% else %}text-red-600{% endif %} amount-value" id="sankey-balance">
+              {{ period_balance|floatformat:2 }} €
+            </div>
+          </div>
+        </div>
+      </div>
+      <div id="sankey-chart" style="height: 600px; width: 100%;"></div>
+      <p class="text-xs text-gray-500 mt-4 text-center">💡 Assignez des catégories à vos transactions pour visualiser le flux de votre argent</p>
+      
+      <!-- Bouton pour afficher les détails -->
+      <div class="mt-6 text-center">
+        <button onclick="toggleSankeyDetails()" id="sankey-details-toggle" class="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+          </svg>
+          Afficher les détails des transactions
+        </button>
+      </div>
+      
+      <!-- Panneau de détails (caché par défaut) -->
+      <div id="sankey-details-panel" class="hidden mt-6 border-t border-gray-200 pt-6">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <!-- Revenus -->
+          <div>
+            <h3 class="text-lg font-bold text-green-600 mb-4 flex items-center gap-2">
+              <span class="text-2xl">💰</span>
+              Revenus par catégorie
+            </h3>
+            <div id="sankey-income-details" class="space-y-4">
+              <!-- Rempli par JavaScript -->
+            </div>
+          </div>
+          
+          <!-- Dépenses -->
+          <div>
+            <h3 class="text-lg font-bold text-red-600 mb-4 flex items-center gap-2">
+              <span class="text-2xl">💸</span>
+              Dépenses par catégorie
+            </h3>
+            <div id="sankey-expense-details" class="space-y-4">
+              <!-- Rempli par JavaScript -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Graphiques -->
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-8">
+    <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 xl:col-span-2">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-bold text-gray-900">Évolution sur 6 mois</h2>
+        <span class="text-xs text-gray-500">Montants en euros</span>
+      </div>
+      <canvas id="history-chart" height="80"></canvas>
+    </div>
+    <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-bold text-gray-900">Catégories principales</h2>
+        <span class="text-xs text-gray-500">Dépenses</span>
+      </div>
+      <canvas id="category-chart" height="80"></canvas>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+    <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 xl:col-span-2">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-bold text-gray-900">Dépenses quotidiennes</h2>
+        <span class="text-xs text-gray-500">Sur la période</span>
+      </div>
+      <canvas id="daily-chart" height="60"></canvas>
+    </div>
+  </div>
+
+  {{ history_chart|json_script:"history-data" }}
+  {{ category_chart|json_script:"category-data" }}
+  {{ daily_chart|json_script:"daily-data" }}
+
+  <script>
+    // Fonction pour masquer/afficher les montants
+    function toggleAmounts() {
+      const body = document.body;
+      const eyeOpen = document.getElementById('eyeOpenIcon');
+      const eyeClosed = document.getElementById('eyeClosedIcon');
+      const isHidden = body.classList.toggle('amounts-hidden');
+      
+      eyeOpen.classList.toggle('hidden', isHidden);
+      eyeClosed.classList.toggle('hidden', !isHidden);
+      
+      localStorage.setItem('hideAmounts', isHidden ? 'true' : 'false');
+    }
+    
+    // Charger la préférence au démarrage
+    document.addEventListener('DOMContentLoaded', function() {
+      const hideAmounts = localStorage.getItem('hideAmounts') === 'true';
+      if (hideAmounts) {
+        document.body.classList.add('amounts-hidden');
+        document.getElementById('eyeOpenIcon').classList.add('hidden');
+        document.getElementById('eyeClosedIcon').classList.remove('hidden');
+      }
+    });
+
+    const historyData = JSON.parse(document.getElementById('history-data').textContent);
+    const categoryData = JSON.parse(document.getElementById('category-data').textContent);
+    const dailyData = JSON.parse(document.getElementById('daily-data').textContent);
+
+    // Configuration commune pour les graphiques
+    const chartOptions = {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            padding: 15,
+            usePointStyle: true,
+          }
+        },
+        tooltip: {
+          backgroundColor: 'rgba(0, 0, 0, 0.8)',
+          padding: 12,
+          titleFont: { size: 14 },
+          bodyFont: { size: 13 },
+        }
+      }
+    };
+
+    // Graphique d'évolution
+    const historyCtx = document.getElementById('history-chart');
+    new Chart(historyCtx, {
+      type: 'line',
+      data: {
+        labels: historyData.labels,
+        datasets: [
+          {
+            label: 'Revenus',
+            data: historyData.income,
+            borderColor: '#22c55e',
+            backgroundColor: 'rgba(34,197,94,0.1)',
+            tension: 0.4,
+            fill: true,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+          },
+          {
+            label: 'Dépenses',
+            data: historyData.expenses,
+            borderColor: '#ef4444',
+            backgroundColor: 'rgba(239,68,68,0.1)',
+            tension: 0.4,
+            fill: true,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+          },
+          {
+            label: 'Solde',
+            data: historyData.balance,
+            borderColor: '#6366f1',
+            backgroundColor: 'rgba(99,102,241,0.1)',
+            tension: 0.4,
+            fill: false,
+            pointRadius: 4,
+            pointHoverRadius: 6,
+          }
+        ]
+      },
+      options: {
+        ...chartOptions,
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: value => `${value} €`
+            },
+            grid: {
+              color: 'rgba(0, 0, 0, 0.05)'
+            }
+          },
+          x: {
+            grid: {
+              display: false
+            }
+          }
+        }
+      }
+    });
+
+    // Graphique des catégories
+    const categoryCtx = document.getElementById('category-chart');
+    new Chart(categoryCtx, {
+      type: 'doughnut',
+      data: {
+        labels: categoryData.labels,
+        datasets: [{
+          label: 'Dépenses',
+          data: categoryData.values,
+          backgroundColor: [
+            '#6366f1', '#22c55e', '#f97316', '#a855f7',
+            '#ef4444', '#14b8a6', '#facc15', '#8b5cf6'
+          ],
+          borderWidth: 0,
+        }]
+      },
+      options: {
+        ...chartOptions,
+        plugins: {
+          ...chartOptions.plugins,
+          tooltip: {
+            ...chartOptions.plugins.tooltip,
+            callbacks: {
+              label: context => `${context.label}: ${context.parsed} €`
+            }
+          }
+        }
+      }
+    });
+
+    // Graphique quotidien
+    const dailyCtx = document.getElementById('daily-chart');
+    new Chart(dailyCtx, {
+      type: 'bar',
+      data: {
+        labels: dailyData.labels,
+        datasets: [{
+          label: 'Dépenses quotidiennes',
+          data: dailyData.values,
+          backgroundColor: '#6366f1',
+          borderRadius: 8,
+          borderSkipped: false,
+        }]
+      },
+      options: {
+        ...chartOptions,
+        plugins: {
+          ...chartOptions.plugins,
+          legend: {
+            display: false
+          }
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: {
+              callback: value => `${value} €`
+            },
+            grid: {
+              color: 'rgba(0, 0, 0, 0.05)'
+            }
+          },
+          x: {
+            grid: {
+              display: false
+            }
+          }
+        }
+      }
+    });
+
+    // Diagramme de Sankey
+    const sankeyData = {{ sankey_data }};
+    console.log('Sankey Data:', sankeyData);
+    console.log('Sankey Data length:', sankeyData ? sankeyData.length : 0);
+    
+    if (sankeyData && sankeyData.length > 0) {
+      console.log('Début de la création du diagramme Sankey');
+      
+      try {
+        // Vérifier que d3.sankey est disponible
+        if (typeof d3.sankey === 'undefined') {
+          console.error('d3.sankey n\'est pas chargé !');
+          document.getElementById('sankey-chart').innerHTML = '<div class="flex items-center justify-center h-full text-red-500"><p>Erreur : Bibliothèque D3 Sankey non chargée</p></div>';
+        } else {
+        
+        // Préparer les données pour D3 Sankey
+        const nodes = [];
+        const nodeMap = new Map();
+        
+        // Extraire tous les nœuds uniques
+        sankeyData.forEach(link => {
+          if (!nodeMap.has(link.source)) {
+            nodeMap.set(link.source, nodes.length);
+            nodes.push({ name: link.source });
+          }
+          if (!nodeMap.has(link.target)) {
+            nodeMap.set(link.target, nodes.length);
+            nodes.push({ name: link.target });
+          }
+        });
+        
+        console.log('Nodes:', nodes);
+        console.log('Node Map:', nodeMap);
+        
+        // Créer les liens en utilisant directement les noms (car on a défini nodeId)
+        const links = sankeyData.map(link => ({
+          source: link.source,
+          target: link.target,
+          value: link.value
+        }));
+        
+        console.log('Links:', links);
+        
+        // Configuration du Sankey
+        const margin = { top: 10, right: 10, bottom: 10, left: 10 };
+        const container = document.getElementById('sankey-chart');
+        const width = container.clientWidth - margin.left - margin.right;
+        const height = 600 - margin.top - margin.bottom;
+        
+        // Créer le SVG
+        const svg = d3.select('#sankey-chart')
+          .append('svg')
+          .attr('width', width + margin.left + margin.right)
+          .attr('height', height + margin.top + margin.bottom)
+          .append('g')
+          .attr('transform', `translate(${margin.left},${margin.top})`);
+        
+        // Générateur de Sankey - laisser d3-sankey gérer les tailles naturellement
+        const sankey = d3.sankey()
+          .nodeWidth(20)
+          .nodePadding(25) // Espacement généreux entre les nœuds
+          .extent([[0, 0], [width, height]])
+          .nodeId(d => d.name);
+        
+        // Générer le graphe - d3-sankey calculera automatiquement les bonnes proportions
+        const graph = sankey({
+          nodes: nodes.map(d => Object.assign({}, d)),
+          links: links.map(d => Object.assign({}, d))
+        });
+        
+        // Fonction pour déterminer la couleur d'un nœud
+        const getNodeColor = (name) => {
+          if (name === 'Revenus') return '#6366f1'; // Bleu indigo pour le nœud central
+          if (name.startsWith('💰')) return '#10b981'; // Vert pour les sources de revenus
+          if (name.startsWith('💸')) return '#ef4444'; // Rouge pour les dépenses
+          return '#94a3b8'; // Gris par défaut
+        };
+        
+        // Dessiner les liens
+        svg.append('g')
+          .selectAll('path')
+          .data(graph.links)
+          .join('path')
+          .attr('d', d3.sankeyLinkHorizontal())
+          .attr('stroke', d => {
+            // Couleur basée sur la source du lien
+            return getNodeColor(d.source.name);
+          })
+          .attr('stroke-width', d => Math.max(1, d.width))
+          .attr('fill', 'none')
+          .attr('opacity', 0.4)
+          .append('title')
+          .text(d => `${d.source.name} → ${d.target.name}\n${d.value.toFixed(2)} €`);
+        
+        // Dessiner les nœuds
+        const node = svg.append('g')
+          .selectAll('g')
+          .data(graph.nodes)
+          .join('g');
+        
+        // Calculer le total pour déterminer les petites catégories
+        const totalValue = graph.nodes.reduce((sum, d) => {
+          if (d.name !== 'Revenus') sum += d.value;
+          return sum;
+        }, 0);
+        const threshold = totalValue * 0.01; // 1% du total
+        const minHoverHeight = 30; // Hauteur minimale pour le survol
+        
+        // Rectangle visible du nœud (taille proportionnelle)
+        node.append('rect')
+          .attr('class', 'node-rect')
+          .attr('x', d => d.x0)
+          .attr('y', d => d.y0)
+          .attr('height', d => d.y1 - d.y0)
+          .attr('width', d => d.x1 - d.x0)
+          .attr('fill', d => getNodeColor(d.name))
+          .attr('opacity', 0.9)
+          .attr('rx', 3)
+          .attr('ry', 3);
+        
+        // Rectangle invisible élargi pour les petits nœuds (pour faciliter le survol)
+        node.append('rect')
+          .attr('class', 'node-hover-area')
+          .attr('x', d => d.x0)
+          .attr('y', d => {
+            const currentHeight = d.y1 - d.y0;
+            if (currentHeight < minHoverHeight) {
+              // Centrer la zone de survol sur le petit nœud
+              return d.y0 - (minHoverHeight - currentHeight) / 2;
+            }
+            return d.y0;
+          })
+          .attr('height', d => {
+            const currentHeight = d.y1 - d.y0;
+            return Math.max(currentHeight, minHoverHeight);
+          })
+          .attr('width', d => d.x1 - d.x0)
+          .attr('fill', 'transparent')
+          .attr('pointer-events', 'all')
+          .on('mouseenter', function(event, d) {
+            // Afficher le nom complet au survol pour les petites catégories
+            const nameLabel = d3.select(this.parentNode).select('.node-name-label');
+            if (nameLabel.classed('hidden-label')) {
+              nameLabel.style('opacity', 1);
+            }
+          })
+          .on('mouseleave', function(event, d) {
+            // Cacher le nom pour les petites catégories
+            const nameLabel = d3.select(this.parentNode).select('.node-name-label');
+            if (nameLabel.classed('hidden-label')) {
+              nameLabel.style('opacity', 0);
+            }
+          })
+          .append('title')
+          .text(d => `${d.name}\n${d.value.toFixed(2)} €`);
+        
+        // Ajouter les labels (nom de la catégorie)
+        node.append('text')
+          .attr('class', 'node-name-label')
+          .classed('hidden-label', d => d.value < threshold && d.name !== 'Revenus')
+          .attr('x', d => d.x0 < width / 2 ? d.x1 + 6 : d.x0 - 6)
+          .attr('y', d => (d.y1 + d.y0) / 2)
+          .attr('dy', '0.35em')
+          .attr('text-anchor', d => d.x0 < width / 2 ? 'start' : 'end')
+          .text(d => d.name)
+          .style('font-size', '12px')
+          .style('font-weight', d => d.name === 'Revenus' ? '700' : '500')
+          .style('fill', '#374151')
+          .style('opacity', d => (d.value < threshold && d.name !== 'Revenus') ? 0 : 1)
+          .style('transition', 'opacity 0.3s');
+        
+        // Ajouter les montants
+        node.append('text')
+          .attr('x', d => d.x0 < width / 2 ? d.x1 + 6 : d.x0 - 6)
+          .attr('y', d => (d.y1 + d.y0) / 2)
+          .attr('dy', d => {
+            // Si le nom est caché, centrer le montant, sinon le décaler
+            return (d.value < threshold && d.name !== 'Revenus') ? '0.35em' : '1.5em';
+          })
+          .attr('text-anchor', d => d.x0 < width / 2 ? 'start' : 'end')
+          .text(d => `${d.value.toFixed(0)} €`)
+          .style('font-size', '10px')
+          .style('font-weight', d => d.name === 'Revenus' ? '700' : '400')
+          .style('fill', '#6b7280');
+        
+        console.log('Diagramme Sankey créé avec succès');
+        }
+      } catch (error) {
+        console.error('Erreur lors de la création du diagramme Sankey:', error);
+        document.getElementById('sankey-chart').innerHTML = '<div class="flex items-center justify-center h-full text-red-500"><p>Erreur lors de la création du diagramme: ' + error.message + '</p></div>';
+      }
+    } else {
+      // Afficher un message si pas de données
+      console.log('Pas de données pour le Sankey');
+      document.getElementById('sankey-chart').innerHTML = '<div class="flex items-center justify-center h-full text-gray-500"><p>Aucune donnée à afficher. Assignez des catégories à vos transactions pour visualiser le flux de trésorerie.</p></div>';
+    }
+
+    // Détails des transactions par catégorie
+    const sankeyDetails = {{ sankey_details }};
+    console.log('Sankey Details:', sankeyDetails);
+    
+    // Fonction pour afficher/masquer les détails
+    function toggleSankeyDetails() {
+      const panel = document.getElementById('sankey-details-panel');
+      const button = document.getElementById('sankey-details-toggle');
+      const icon = button.querySelector('svg');
+      
+      if (panel.classList.contains('hidden')) {
+        // Remplir le panneau si première ouverture
+        if (!panel.dataset.loaded) {
+          populateSankeyDetails();
+          panel.dataset.loaded = 'true';
+        }
+        
+        panel.classList.remove('hidden');
+        button.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg> Masquer les détails';
+      } else {
+        panel.classList.add('hidden');
+        button.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg> Afficher les détails des transactions';
+      }
+    }
+    
+    // Fonction pour remplir le panneau de détails
+    function populateSankeyDetails() {
+      const incomeContainer = document.getElementById('sankey-income-details');
+      const expenseContainer = document.getElementById('sankey-expense-details');
+      
+      // Revenus
+      if (sankeyDetails.income && sankeyDetails.income.length > 0) {
+        incomeContainer.innerHTML = sankeyDetails.income.map(category => {
+          const transactionsHtml = category.transactions.slice(0, 5).map(tx => 
+            `<div class="text-xs py-1 border-b border-gray-100">
+              <div class="flex justify-between items-start">
+                <div class="flex-1">
+                  <div>
+                    <span class="text-gray-500">${tx.date}</span> - 
+                    <span class="text-gray-700">${tx.description}</span>
+                  </div>
+                  <div class="text-gray-400 text-[10px] mt-0.5">
+                    Compte: ${tx.account}
+                  </div>
+                </div>
+                <span class="font-medium text-green-600 ml-2 whitespace-nowrap">${tx.amount.toFixed(2)} €</span>
+              </div>
+            </div>`
+          ).join('');
+          
+          const moreText = category.count > 5 ? `<p class="text-xs text-gray-400 mt-2">... et ${category.count - 5} autre(s) transaction(s)</p>` : '';
+          
+          return `<div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+            <div class="flex justify-between items-center mb-3">
+              <h4 class="font-semibold text-gray-900">${category.category}</h4>
+              <span class="text-sm font-bold text-green-600">${category.total.toFixed(2)} €</span>
+            </div>
+            <p class="text-xs text-gray-500 mb-2">${category.count} transaction(s)</p>
+            <div class="space-y-1">
+              ${transactionsHtml}
+            </div>
+            ${moreText}
+          </div>`;
+        }).join('');
+      } else {
+        incomeContainer.innerHTML = '<p class="text-gray-500 text-sm">Aucune transaction de revenus catégorisée</p>';
+      }
+      
+      // Dépenses
+      if (sankeyDetails.expenses && sankeyDetails.expenses.length > 0) {
+        expenseContainer.innerHTML = sankeyDetails.expenses.map(category => {
+          const transactionsHtml = category.transactions.slice(0, 5).map(tx => 
+            `<div class="text-xs py-1 border-b border-gray-100">
+              <div class="flex justify-between items-start">
+                <div class="flex-1">
+                  <div>
+                    <span class="text-gray-500">${tx.date}</span> - 
+                    <span class="text-gray-700">${tx.description}</span>
+                  </div>
+                  <div class="text-gray-400 text-[10px] mt-0.5">
+                    Compte: ${tx.account}
+                  </div>
+                </div>
+                <span class="font-medium text-red-600 ml-2 whitespace-nowrap">${tx.amount.toFixed(2)} €</span>
+              </div>
+            </div>`
+          ).join('');
+          
+          const moreText = category.count > 5 ? `<p class="text-xs text-gray-400 mt-2">... et ${category.count - 5} autre(s) transaction(s)</p>` : '';
+          
+          return `<div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+            <div class="flex justify-between items-center mb-3">
+              <h4 class="font-semibold text-gray-900">${category.category}</h4>
+              <span class="text-sm font-bold text-red-600">${category.total.toFixed(2)} €</span>
+            </div>
+            <p class="text-xs text-gray-500 mb-2">${category.count} transaction(s)</p>
+            <div class="space-y-1">
+              ${transactionsHtml}
+            </div>
+            ${moreText}
+          </div>`;
+        }).join('');
+      } else {
+        expenseContainer.innerHTML = '<p class="text-gray-500 text-sm">Aucune transaction de dépenses catégorisée</p>';
+      }
+    }
+
+    // Toggle entre sélection rapide et période personnalisée
+    function togglePeriodMode(mode) {
+      const quickMode = document.getElementById('quickSelectMode');
+      const customMode = document.getElementById('customSelectMode');
+      const quickBtn = document.getElementById('quickSelectBtn');
+      const customBtn = document.getElementById('customSelectBtn');
+      
+      if (mode === 'quick') {
+        quickMode.classList.remove('hidden');
+        customMode.classList.add('hidden');
+        quickBtn.classList.add('bg-white', 'text-primary', 'shadow-sm');
+        quickBtn.classList.remove('text-gray-600');
+        customBtn.classList.remove('bg-white', 'text-primary', 'shadow-sm');
+        customBtn.classList.add('text-gray-600');
+      } else {
+        quickMode.classList.add('hidden');
+        customMode.classList.remove('hidden');
+        customBtn.classList.add('bg-white', 'text-primary', 'shadow-sm');
+        customBtn.classList.remove('text-gray-600');
+        quickBtn.classList.remove('bg-white', 'text-primary', 'shadow-sm');
+        quickBtn.classList.add('text-gray-600');
+      }
+    }
+
+    // Définir le mois actuel (du 24 au 24)
+    function setCurrentMonth() {
+      const today = new Date();
+      const currentDay = today.getDate();
+      
+      // Si on est avant le 24, prendre le mois actuel
+      // Si on est le 24 ou après, prendre le mois suivant
+      let targetMonth;
+      if (currentDay >= 24) {
+        targetMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
+      } else {
+        targetMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+      }
+      
+      // Format YYYY-MM
+      const monthValue = targetMonth.getFullYear() + '-' + String(targetMonth.getMonth() + 1).padStart(2, '0');
+      document.getElementById('month').value = monthValue;
+      document.getElementById('periodForm').submit();
+    }
+
+    // Modal de mise à jour de valorisation
+    function openValuationModal() {
+      document.getElementById('valuationModal').classList.remove('hidden');
+    }
+
+    function closeValuationModal() {
+      document.getElementById('valuationModal').classList.add('hidden');
+      document.getElementById('valuationForm').reset();
+      document.getElementById('valuationError').classList.add('hidden');
+      document.getElementById('valuationSuccess').classList.add('hidden');
+    }
+
+    function getCookie(name) {
+      let cookieValue = null;
+      if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+          const cookie = cookies[i].trim();
+          if (cookie.substring(0, name.length + 1) === (name + '=')) {
+            cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+            break;
+          }
+        }
+      }
+      return cookieValue;
+    }
+
+    async function submitValuation(event) {
+      event.preventDefault();
+      
+      const accountId = document.getElementById('valuation_account').value;
+      const valuation = document.getElementById('valuation_amount').value;
+      const date = document.getElementById('valuation_date').value;
+      
+      if (!accountId || !valuation || !date) {
+        document.getElementById('valuationError').textContent = 'Veuillez remplir tous les champs';
+        document.getElementById('valuationError').classList.remove('hidden');
+        return;
+      }
+      
+      const submitBtn = document.getElementById('submitValuationBtn');
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Mise à jour...';
+      
+      try {
+        const response = await fetch('{% url "update_investment_valuation" %}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCookie('csrftoken'),
+          },
+          body: JSON.stringify({
+            account_id: accountId,
+            valuation: parseFloat(valuation),
+            date: date,
+          }),
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+          document.getElementById('valuationSuccess').textContent = data.message || 'Valorisation mise à jour avec succès';
+          document.getElementById('valuationSuccess').classList.remove('hidden');
+          document.getElementById('valuationError').classList.add('hidden');
+          
+          // Recharger la page après 1,5 seconde
+          setTimeout(() => {
+            window.location.reload();
+          }, 1500);
+        } else {
+          document.getElementById('valuationError').textContent = data.error || 'Erreur lors de la mise à jour';
+          document.getElementById('valuationError').classList.remove('hidden');
+          document.getElementById('valuationSuccess').classList.add('hidden');
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Mettre à jour';
+        }
+      } catch (error) {
+        document.getElementById('valuationError').textContent = 'Erreur réseau : ' + error.message;
+        document.getElementById('valuationError').classList.remove('hidden');
+        document.getElementById('valuationSuccess').classList.add('hidden');
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Mettre à jour';
+      }
+    }
+
+    // Fermer le modal avec Escape
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        closeValuationModal();
+      }
+    });
+  </script>
+
+  <!-- Modal de mise à jour de valorisation -->
+  <div id="valuationModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full">
+      <div class="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between rounded-t-2xl">
+        <h2 class="text-xl font-bold text-gray-900 dark:text-white">Mettre à jour la valorisation</h2>
+        <button onclick="closeValuationModal()" class="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+          <svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      
+      <form id="valuationForm" onsubmit="submitValuation(event)" class="p-6 space-y-4">
+        <!-- Messages -->
+        <div id="valuationError" class="hidden p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm"></div>
+        <div id="valuationSuccess" class="hidden p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm"></div>
+        
+        <!-- Compte -->
+        <div>
+          <label for="valuation_account" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Compte d'investissement
+          </label>
+          <select id="valuation_account" required
+                  class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+            <option value="">Sélectionnez un compte</option>
+            {% for account in investment_accounts %}
+            <option value="{{ account.id }}">{{ account.name }} ({{ account.provider }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        
+        <!-- Montant -->
+        <div>
+          <label for="valuation_amount" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Valorisation actuelle (€)
+          </label>
+          <input type="number" id="valuation_amount" step="0.01" min="0" required placeholder="Ex: 5420.50"
+                 class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+        </div>
+        
+        <!-- Date -->
+        <div>
+          <label for="valuation_date" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            Date de la valorisation
+          </label>
+          <input type="date" id="valuation_date" required
+                 class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+        </div>
+        
+        <!-- Note -->
+        <div class="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+          <p class="text-xs text-blue-700 dark:text-blue-300">
+            <strong>Note :</strong> Cette valorisation sera utilisée pour calculer votre plus-value et performance.
+          </p>
+        </div>
+        
+        <!-- Boutons -->
+        <div class="flex items-center gap-3 pt-2">
+          <button type="button" onclick="closeValuationModal()"
+                  class="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+            Annuler
+          </button>
+          <button type="submit" id="submitValuationBtn"
+                  class="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors">
+            Mettre à jour
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+{% endblock %}

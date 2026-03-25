@@ -1,0 +1,494 @@
+{% extends 'base.html' %}
+{% load finance_filters %}
+{% block title %}Transactions{% endblock %}
+{% block content %}
+  <div class="mb-4">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+      <div>
+        <h1 class="text-2xl font-bold text-gray-900 mb-1">Transactions</h1>
+        <p class="text-sm text-gray-600">Historique de toutes vos transactions</p>
+      </div>
+      <a href="/transactions/new/" class="px-3 py-1.5 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors shadow-sm flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+        </svg>
+        Nouvelle transaction
+      </a>
+    </div>
+    
+    <form method="get" class="mb-4 flex items-center gap-2 bg-white rounded-lg shadow-sm border border-gray-200 p-3">
+      <label for="account" class="text-xs font-medium text-gray-700 whitespace-nowrap">Filtrer par compte:</label>
+      <select name="account" id="account" onchange="this.form.submit()" class="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
+        <option value="">Tous les comptes</option>
+        {% for account in accounts %}
+        <option value="{{ account.id }}" {% if selected_account_id == account.id %}selected{% endif %}>
+          {{ account.name }} ({{ account.type }})
+        </option>
+        {% endfor %}
+      </select>
+      {% if request.GET.page %}
+      <input type="hidden" name="page" value="{{ request.GET.page }}">
+      {% endif %}
+    </form>
+  </div>
+  
+  <div class="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+    <div class="overflow-x-auto">
+      <table class="min-w-full divide-y divide-gray-200">
+        <thead class="bg-gradient-to-r from-gray-50 to-gray-100">
+          <tr>
+            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Date</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden md:table-cell">Compte</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden lg:table-cell">Source</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Description</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Montant</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider hidden lg:table-cell">Solde après</th>
+            <th class="px-3 py-2 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider hidden xl:table-cell">Catégorie</th>
+            <th class="px-3 py-2 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="bg-white divide-y divide-gray-200">
+          {% for item in transactions %}
+          <tr class="hover:bg-gray-50 transition-colors cursor-pointer transaction-row" 
+              data-id="{{ item.transaction.id }}"
+              data-date="{{ item.transaction.posted_at|date:'d/m/Y à H:i' }}"
+              data-account="{{ item.transaction.account.name }}"
+              data-account-type="{{ item.transaction.account.type }}"
+              data-provider="{{ item.transaction.account.provider|default:'manuel' }}"
+              data-description="{{ item.transaction.description }}"
+              data-counterparty="{{ item.transaction.counterparty }}"
+              data-amount="{{ item.transaction.amount }}"
+              data-currency="{{ item.transaction.currency }}"
+              data-balance="{{ item.balance_after }}"
+              data-category="{{ item.transaction.category.name|default:'' }}"
+              data-category-id="{{ item.transaction.category.id|default:'' }}"
+              data-is-transfer="{{ item.transaction.is_transfer }}">
+            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+              <div class="font-medium">{{ item.transaction.posted_at|date:'d/m/Y' }}</div>
+              <div class="text-xs text-gray-500 hidden md:block">{{ item.transaction.posted_at|date:'H:i' }}</div>
+            </td>
+            <td class="px-3 py-2 whitespace-nowrap text-sm font-medium text-gray-900 hidden md:table-cell">
+              <div class="truncate max-w-[120px]">{{ item.transaction.account.name }}</div>
+            </td>
+            <td class="px-3 py-2 whitespace-nowrap hidden lg:table-cell">
+              <span class="px-2 py-0.5 text-xs font-medium rounded-full {% if item.transaction.account.provider == 'traderepublic' %}bg-purple-100 text-purple-800{% elif item.transaction.account.provider == 'boursobank' %}bg-blue-100 text-blue-800{% else %}bg-gray-100 text-gray-800{% endif %}">
+                {{ item.transaction.account.provider|default:'manuel' }}
+              </span>
+            </td>
+            <td class="px-3 py-2 text-sm text-gray-900">
+              <div class="max-w-[200px] md:max-w-[300px] truncate">{{ item.transaction.description }}</div>
+              {% if item.transaction.counterparty %}
+              <div class="text-xs text-gray-500 mt-0.5 truncate max-w-[200px] md:max-w-[300px]">{{ item.transaction.counterparty }}</div>
+              {% endif %}
+            </td>
+            <td class="px-3 py-2 whitespace-nowrap text-right text-sm font-semibold {% if item.transaction.amount < 0 %}text-red-600{% else %}text-green-600{% endif %}">
+              {{ item.transaction.amount|format_amount_6digits }} €
+            </td>
+            <td class="px-3 py-2 whitespace-nowrap text-right text-sm font-medium text-gray-900 hidden lg:table-cell">
+              {{ item.balance_after|format_amount_6digits }} €
+            </td>
+            <td class="px-3 py-2 whitespace-nowrap text-sm text-gray-500 hidden xl:table-cell">
+              {% if item.transaction.category %}
+                <span class="px-2 py-0.5 bg-gray-100 rounded-lg text-xs truncate max-w-[100px] block">{{ item.transaction.category.name }}</span>
+              {% else %}
+                <span class="text-gray-400">—</span>
+              {% endif %}
+            </td>
+            <td class="px-3 py-2 whitespace-nowrap text-right text-sm font-medium" onclick="event.stopPropagation();">
+              <form method="post" action="{% url 'transaction_delete' item.transaction.id %}" onsubmit="return confirm('Êtes-vous sûr de vouloir supprimer cette transaction ? Cette action est irréversible.');" class="inline">
+                {% csrf_token %}
+                {% if request.GET.page %}
+                <input type="hidden" name="page" value="{{ request.GET.page }}">
+                {% endif %}
+                {% if request.GET.account %}
+                <input type="hidden" name="account" value="{{ request.GET.account }}">
+                {% endif %}
+                <button type="submit" class="p-1.5 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors" title="Supprimer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                  </svg>
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="8" class="px-4 py-6 text-center text-gray-500">
+              <svg class="mx-auto h-10 w-10 text-gray-400 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+              </svg>
+              <p class="text-base font-medium">Aucune transaction</p>
+              <p class="text-xs mt-1">Commencez par ajouter une transaction ou importer un relevé bancaire</p>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  
+  {% if page.has_other_pages %}
+  <div class="mt-4 flex items-center justify-center">
+    <form method="get" class="flex items-center gap-2 bg-white rounded-lg shadow-sm border border-gray-200 px-4 py-2">
+      <label for="page" class="text-xs font-medium text-gray-700">Page:</label>
+      <select name="page" id="page" onchange="this.form.submit()" class="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
+        {% for page_num in page.paginator.page_range %}
+        <option value="{{ page_num }}" {% if page_num == page.number %}selected{% endif %}>
+          {{ page_num }}
+        </option>
+        {% endfor %}
+      </select>
+      <span class="text-xs text-gray-600">sur {{ page.paginator.num_pages }}</span>
+      {% if request.GET.account %}
+      <input type="hidden" name="account" value="{{ request.GET.account }}">
+      {% endif %}
+    </form>
+  </div>
+  {% endif %}
+
+  <!-- Modal de détails de transaction -->
+  <div id="transactionModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+      <div class="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+        <h2 class="text-xl font-bold text-gray-900">Détails de la transaction</h2>
+        <button onclick="closeModal()" class="p-2 hover:bg-gray-100 rounded-lg transition-colors">
+          <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+        </button>
+      </div>
+      
+      <div class="p-6 space-y-4">
+        <!-- Date et heure -->
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 bg-blue-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+            </svg>
+          </div>
+          <div class="flex-1">
+            <div class="text-xs text-gray-500 font-medium">Date et heure</div>
+            <div class="text-sm text-gray-900 mt-1" id="modal-date"></div>
+          </div>
+        </div>
+
+        <!-- Compte -->
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+            </svg>
+          </div>
+          <div class="flex-1">
+            <div class="text-xs text-gray-500 font-medium">Compte</div>
+            <div class="text-sm text-gray-900 mt-1">
+              <span id="modal-account"></span>
+              <span id="modal-account-type" class="text-gray-500 text-xs ml-2"></span>
+            </div>
+            <div class="mt-1">
+              <span id="modal-provider" class="px-2 py-0.5 text-xs font-medium rounded-full"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Description complète -->
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16m-7 6h7"></path>
+            </svg>
+          </div>
+          <div class="flex-1">
+            <div class="text-xs text-gray-500 font-medium">Description</div>
+            <div class="text-sm text-gray-900 mt-1 break-words" id="modal-description"></div>
+          </div>
+        </div>
+
+        <!-- Contrepartie -->
+        <div id="modal-counterparty-section" class="flex items-start gap-3">
+          <div class="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+            </svg>
+          </div>
+          <div class="flex-1">
+            <div class="text-xs text-gray-500 font-medium">Contrepartie</div>
+            <div class="text-sm text-gray-900 mt-1 break-words" id="modal-counterparty"></div>
+          </div>
+        </div>
+
+        <!-- Montant -->
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 bg-yellow-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+          </div>
+          <div class="flex-1">
+            <div class="text-xs text-gray-500 font-medium">Montant</div>
+            <div class="text-lg font-bold mt-1" id="modal-amount"></div>
+          </div>
+        </div>
+
+        <!-- Solde après transaction -->
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+            </svg>
+          </div>
+          <div class="flex-1">
+            <div class="text-xs text-gray-500 font-medium">Solde après transaction</div>
+            <div class="text-sm font-semibold text-gray-900 mt-1" id="modal-balance"></div>
+          </div>
+        </div>
+
+        <!-- Catégorie -->
+        <div class="flex items-start gap-3">
+          <div class="w-10 h-10 bg-pink-100 rounded-lg flex items-center justify-center flex-shrink-0">
+            <svg class="w-5 h-5 text-pink-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"></path>
+            </svg>
+          </div>
+          <div class="flex-1">
+            <label for="category-select" class="text-xs text-gray-500 font-medium block mb-1">Catégorie</label>
+            <select id="category-select" onchange="updateCategory()" class="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-primary text-gray-900 bg-white">
+              <option value="">Sans catégorie</option>
+              {% regroup categories by parent as category_groups %}
+              {% for group in category_groups %}
+                {% if group.grouper %}
+                  <optgroup label="{{ group.grouper.name }}">
+                    {% for cat in group.list %}
+                      <option value="{{ cat.id }}">{{ cat.name }}</option>
+                    {% endfor %}
+                  </optgroup>
+                {% else %}
+                  {% for cat in group.list %}
+                    <option value="{{ cat.id }}">{{ cat.name }}</option>
+                  {% endfor %}
+                {% endif %}
+              {% endfor %}
+            </select>
+            <p class="text-xs text-gray-400 mt-1">La catégorie est sauvegardée automatiquement</p>
+          </div>
+        </div>
+
+        <!-- Type de transaction -->
+        <div id="modal-transfer-badge" class="hidden">
+          <div class="px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg">
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+              </svg>
+              <span class="text-xs font-medium text-blue-700">Transaction de virement</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Variable globale pour stocker l'ID de la transaction courante
+    let currentTransactionId = null;
+    
+    // Ouvrir le modal de détails
+    document.querySelectorAll('.transaction-row').forEach(row => {
+      row.addEventListener('click', function() {
+        const id = this.dataset.id;
+        const date = this.dataset.date;
+        const account = this.dataset.account;
+        const accountType = this.dataset.accountType;
+        const provider = this.dataset.provider;
+        const description = this.dataset.description;
+        const counterparty = this.dataset.counterparty;
+        const amount = parseFloat(this.dataset.amount);
+        const currency = this.dataset.currency;
+        const balance = parseFloat(this.dataset.balance);
+        const category = this.dataset.category;
+        const categoryId = this.dataset.categoryId;
+        const isTransfer = this.dataset.isTransfer === 'True';
+        
+        // Stocker l'ID de la transaction
+        currentTransactionId = id;
+
+        // Remplir le modal
+        document.getElementById('modal-date').textContent = date;
+        document.getElementById('modal-account').textContent = account;
+        document.getElementById('modal-account-type').textContent = '(' + accountType + ')';
+        
+        // Provider badge
+        const providerEl = document.getElementById('modal-provider');
+        providerEl.textContent = provider;
+        if (provider === 'traderepublic') {
+          providerEl.className = 'px-2 py-0.5 text-xs font-medium rounded-full bg-purple-100 text-purple-800';
+        } else if (provider === 'boursobank') {
+          providerEl.className = 'px-2 py-0.5 text-xs font-medium rounded-full bg-blue-100 text-blue-800';
+        } else if (provider === 'hellobank') {
+          providerEl.className = 'px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-800';
+        } else {
+          providerEl.className = 'px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-800';
+        }
+        
+        document.getElementById('modal-description').textContent = description;
+        
+        // Contrepartie (afficher seulement si elle existe)
+        const counterpartySection = document.getElementById('modal-counterparty-section');
+        if (counterparty) {
+          counterpartySection.classList.remove('hidden');
+          document.getElementById('modal-counterparty').textContent = counterparty;
+        } else {
+          counterpartySection.classList.add('hidden');
+        }
+        
+        // Montant avec couleur
+        const amountEl = document.getElementById('modal-amount');
+        const amountFormatted = formatAmount(amount) + ' ' + currency;
+        amountEl.textContent = amountFormatted;
+        if (amount < 0) {
+          amountEl.className = 'text-lg font-bold mt-1 text-red-600';
+        } else {
+          amountEl.className = 'text-lg font-bold mt-1 text-green-600';
+        }
+        
+        document.getElementById('modal-balance').textContent = formatAmount(balance) + ' ' + currency;
+        
+        // Sélectionner la catégorie dans le select
+        const categorySelect = document.getElementById('category-select');
+        categorySelect.value = categoryId || '';
+        
+        // Badge virement
+        const transferBadge = document.getElementById('modal-transfer-badge');
+        if (isTransfer) {
+          transferBadge.classList.remove('hidden');
+        } else {
+          transferBadge.classList.add('hidden');
+        }
+        
+        // Afficher le modal
+        document.getElementById('transactionModal').classList.remove('hidden');
+      });
+    });
+
+    // Fermer le modal
+    function closeModal() {
+      document.getElementById('transactionModal').classList.add('hidden');
+    }
+
+    // Fermer avec Escape
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        closeModal();
+      }
+    });
+
+    // Fermer en cliquant sur le fond
+    document.getElementById('transactionModal').addEventListener('click', function(e) {
+      if (e.target === this) {
+        closeModal();
+      }
+    });
+
+    // Formater le montant avec virgule comme séparateur décimal
+    function formatAmount(value) {
+      if (value === null || value === undefined) return '0,00';
+      
+      const absAmount = Math.abs(value);
+      const intPart = Math.floor(absAmount);
+      const intDigits = intPart.toString().length;
+      
+      let formatted;
+      if (intDigits >= 7) {
+        formatted = absAmount.toFixed(0);
+      } else if (intDigits === 6) {
+        formatted = absAmount.toFixed(1);
+      } else if (intDigits === 5) {
+        formatted = absAmount.toFixed(2);
+      } else if (intDigits === 4) {
+        formatted = absAmount.toFixed(3);
+      } else if (intDigits === 3) {
+        formatted = absAmount.toFixed(4);
+      } else if (intDigits === 2) {
+        formatted = absAmount.toFixed(5);
+      } else if (intDigits === 1) {
+        formatted = absAmount.toFixed(6);
+      } else {
+        formatted = absAmount.toFixed(7);
+      }
+      
+      formatted = formatted.replace('.', ',');
+      
+      // Supprimer les zéros inutiles
+      if (formatted.includes(',')) {
+        const parts = formatted.split(',');
+        if (parts.length === 2) {
+          let decimalPart = parts[1].replace(/0+$/, '');
+          if (decimalPart.length === 0) {
+            formatted = parts[0];
+          } else {
+            formatted = parts[0] + ',' + decimalPart;
+          }
+        }
+      }
+      
+      if (value < 0) {
+        formatted = '-' + formatted;
+      }
+      
+      return formatted;
+    }
+    
+    // Mettre à jour la catégorie d'une transaction
+    function updateCategory() {
+      if (!currentTransactionId) return;
+      
+      const categoryId = document.getElementById('category-select').value;
+      const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+      
+      fetch(`/api/transactions/${currentTransactionId}/update-category`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrftoken,
+        },
+        body: JSON.stringify({
+          category_id: categoryId || null
+        })
+      })
+      .then(response => response.json())
+      .then(data => {
+        if (data.success) {
+          // Mettre à jour la transaction dans le tableau
+          const row = document.querySelector(`tr[data-id="${currentTransactionId}"]`);
+          if (row) {
+            row.dataset.category = data.category_name || '';
+            row.dataset.categoryId = categoryId || '';
+            
+            // Mettre à jour l'affichage de la catégorie dans la colonne du tableau (si visible)
+            const categoryCell = row.querySelector('td:nth-last-child(2)');
+            if (categoryCell) {
+              if (data.category_name && data.category_name !== 'Sans catégorie') {
+                categoryCell.innerHTML = `<span class="px-2 py-0.5 bg-gray-100 rounded-lg text-xs truncate max-w-[100px] block">${data.category_name}</span>`;
+              } else {
+                categoryCell.innerHTML = '<span class="text-gray-400">—</span>';
+              }
+            }
+          }
+          
+          // Animation de succès
+          const select = document.getElementById('category-select');
+          select.classList.add('border-green-500', 'bg-green-50');
+          setTimeout(() => {
+            select.classList.remove('border-green-500', 'bg-green-50');
+          }, 1000);
+        } else {
+          alert('Erreur : ' + (data.error || 'Impossible de mettre à jour la catégorie'));
+        }
+      })
+      .catch(error => {
+        console.error('Erreur:', error);
+        alert('Erreur de connexion au serveur');
+      });
+    }
+  </script>
+{% endblock %}

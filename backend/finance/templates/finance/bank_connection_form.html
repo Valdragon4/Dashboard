@@ -1,0 +1,240 @@
+{% extends 'base.html' %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+  <div class="mb-8">
+    <div class="flex items-center gap-3 mb-2">
+      <a href="{% url 'bank_connections_list' %}" class="text-gray-500 hover:text-gray-700">
+        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+        </svg>
+      </a>
+      <h1 class="text-3xl font-bold text-gray-900">{{ title }}</h1>
+    </div>
+    <p class="text-gray-600 ml-9">Configurez votre connexion bancaire pour la synchronisation automatique</p>
+  </div>
+
+  <form method="post" class="bg-white rounded-2xl shadow-lg border border-gray-200 p-8 max-w-2xl">
+    {% csrf_token %}
+    
+    {% if form.non_field_errors %}
+    <div class="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-800">
+      {{ form.non_field_errors }}
+    </div>
+    {% endif %}
+    
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- Provider -->
+      <div class="md:col-span-2">
+        <label for="{{ form.provider.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+          {{ form.provider.label }} <span class="text-red-500">*</span>
+        </label>
+        <select name="{{ form.provider.name }}" 
+                id="{{ form.provider.id_for_label }}"
+                required
+                onchange="toggleProviderFields()"
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent">
+          <option value="">Sélectionnez un provider</option>
+          {% for value, label in form.provider.field.choices %}
+            <option value="{{ value }}" {% if form.provider.value == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        {% if form.provider.errors %}
+        <div class="mt-1 text-sm text-red-600">{{ form.provider.errors|striptags }}</div>
+        {% endif %}
+      </div>
+
+      <!-- Compte associé -->
+      <div class="md:col-span-2">
+        <label for="{{ form.account.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+          {{ form.account.label }} <span class="text-red-500">*</span>
+        </label>
+        <select name="{{ form.account.name }}" 
+                id="{{ form.account.id_for_label }}"
+                required
+                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent">
+          <option value="">Sélectionnez un compte</option>
+          {% for account in form.account.field.queryset %}
+            <option value="{{ account.id }}" {% if form.account.value == account.id %}selected{% endif %}>{{ account.name }} ({{ account.get_type_display }})</option>
+          {% endfor %}
+        </select>
+        {% if form.account.errors %}
+        <div class="mt-1 text-sm text-red-600">{{ form.account.errors|striptags }}</div>
+        {% endif %}
+      </div>
+
+      <!-- Nom de la connexion -->
+      <div class="md:col-span-2">
+        <label for="{{ form.account_name.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+          {{ form.account_name.label }}
+          <span class="text-xs text-gray-500">(Optionnel, défaut: nom du compte sélectionné)</span>
+        </label>
+        <input type="text" 
+               name="{{ form.account_name.name }}" 
+               id="{{ form.account_name.id_for_label }}"
+               value="{{ form.account_name.value|default:'' }}"
+               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+               placeholder="Ex: Mon compte Trade Republic">
+        {% if form.account_name.errors %}
+        <div class="mt-1 text-sm text-red-600">{{ form.account_name.errors|striptags }}</div>
+        {% endif %}
+      </div>
+
+      <!-- Champs Trade Republic -->
+      <div id="trade-republic-fields" class="md:col-span-2" style="display: none;">
+        <div class="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-4">
+          <h3 class="text-sm font-semibold text-purple-900 mb-3">Credentials Trade Republic</h3>
+          
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label for="{{ form.phone_number.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+                {{ form.phone_number.label }} <span class="text-red-500">*</span>
+              </label>
+              <input type="tel" 
+                     name="{{ form.phone_number.name }}" 
+                     id="{{ form.phone_number.id_for_label }}"
+                     value="{{ form.phone_number.value|default:'' }}"
+                     class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                     placeholder="+33123456789">
+              {% if form.phone_number.errors %}
+              <div class="mt-1 text-sm text-red-600">{{ form.phone_number.errors|striptags }}</div>
+              {% endif %}
+            </div>
+
+            <div>
+              <label for="{{ form.pin.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+                {{ form.pin.label }} <span class="text-red-500">*</span>
+              </label>
+              <input type="password" 
+                     name="{{ form.pin.name }}" 
+                     id="{{ form.pin.id_for_label }}"
+                     value="{{ form.pin.value|default:'' }}"
+                     autocomplete="off"
+                     class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                     placeholder="Code PIN">
+              {% if form.pin.errors %}
+              <div class="mt-1 text-sm text-red-600">{{ form.pin.errors|striptags }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Champs BoursoBank/Hello Bank -->
+      <div id="bank-fields" class="md:col-span-2" style="display: none;">
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+          <h3 class="text-sm font-semibold text-blue-900 mb-3">Credentials bancaires</h3>
+          
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label for="{{ form.username.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+                {{ form.username.label }} <span class="text-red-500">*</span>
+              </label>
+              <input type="text" 
+                     name="{{ form.username.name }}" 
+                     id="{{ form.username.id_for_label }}"
+                     value="{{ form.username.value|default:'' }}"
+                     class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                     placeholder="Nom d'utilisateur">
+              {% if form.username.errors %}
+              <div class="mt-1 text-sm text-red-600">{{ form.username.errors|striptags }}</div>
+              {% endif %}
+            </div>
+
+            <div>
+              <label for="{{ form.password.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+                {{ form.password.label }} <span class="text-red-500">*</span>
+              </label>
+              <input type="password" 
+                     name="{{ form.password.name }}" 
+                     id="{{ form.password.id_for_label }}"
+                     value="{{ form.password.value|default:'' }}"
+                     autocomplete="off"
+                     class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                     placeholder="Mot de passe">
+              {% if form.password.errors %}
+              <div class="mt-1 text-sm text-red-600">{{ form.password.errors|striptags }}</div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Code 2FA (optionnel pour tous) -->
+      <div class="md:col-span-2">
+        <label for="{{ form.two_fa_code.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+          {{ form.two_fa_code.label }}
+          <span class="text-xs text-gray-500">(Optionnel, pour authentification complète)</span>
+        </label>
+        <input type="text" 
+               name="{{ form.two_fa_code.name }}" 
+               id="{{ form.two_fa_code.id_for_label }}"
+               value="{{ form.two_fa_code.value|default:'' }}"
+               maxlength="10"
+               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+               placeholder="Code 2FA (optionnel)">
+        {% if form.two_fa_code.errors %}
+        <div class="mt-1 text-sm text-red-600">{{ form.two_fa_code.errors|striptags }}</div>
+        {% endif %}
+        <div class="mt-1 text-xs text-gray-500">
+          💡 Si vous ne fournissez pas le code 2FA maintenant, vous devrez le saisir lors de la première synchronisation.
+        </div>
+      </div>
+
+      <!-- Synchronisation automatique -->
+      <div class="md:col-span-2">
+        <label class="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" 
+                 name="{{ form.auto_sync_enabled.name }}" 
+                 id="{{ form.auto_sync_enabled.id_for_label }}"
+                 {% if form.auto_sync_enabled.value %}checked{% endif %}
+                 class="w-5 h-5 text-primary border-gray-300 rounded focus:ring-primary">
+          <span class="text-sm font-medium text-gray-700">
+            {{ form.auto_sync_enabled.label }}
+          </span>
+        </label>
+        {% if form.auto_sync_enabled.errors %}
+        <div class="mt-1 text-sm text-red-600">{{ form.auto_sync_enabled.errors|striptags }}</div>
+        {% endif %}
+        <div class="mt-1 text-xs text-gray-500 ml-8">
+          💡 Active la synchronisation automatique quotidienne de ce compte.
+        </div>
+      </div>
+    </div>
+
+    <!-- Boutons -->
+    <div class="mt-8 flex gap-3">
+      <button type="submit" class="px-6 py-3 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark transition-colors shadow-sm">
+        ✓ Enregistrer
+      </button>
+      <a href="{% url 'bank_connections_list' %}" class="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-colors">
+        Annuler
+      </a>
+    </div>
+  </form>
+
+  <script>
+    // Afficher/masquer les champs selon le provider
+    function toggleProviderFields() {
+      const providerSelect = document.getElementById('{{ form.provider.id_for_label }}');
+      const provider = providerSelect.value;
+      const tradeRepublicFields = document.getElementById('trade-republic-fields');
+      const bankFields = document.getElementById('bank-fields');
+      
+      if (provider === 'trade_republic') {
+        tradeRepublicFields.style.display = 'block';
+        bankFields.style.display = 'none';
+      } else if (provider === 'boursorama' || provider === 'hellobank') {
+        tradeRepublicFields.style.display = 'none';
+        bankFields.style.display = 'block';
+      } else {
+        tradeRepublicFields.style.display = 'none';
+        bankFields.style.display = 'none';
+      }
+    }
+    
+    // Vérifier au chargement de la page
+    document.addEventListener('DOMContentLoaded', function() {
+      toggleProviderFields();
+    });
+  </script>
+{% endblock %}

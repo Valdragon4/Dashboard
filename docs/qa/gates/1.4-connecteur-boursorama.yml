@@ -1,0 +1,63 @@
+schema: 1
+story: "1.4"
+story_title: "Connecteur BoursoBank"
+gate: PASS
+status_reason: "Implémentation solide avec recherche approfondie des options techniques, connecteur Playwright bien structuré, authentification 2FA complète, gestion robuste des erreurs avec retry automatique, et tests unitaires complets. Documentation exhaustive incluant recherche des options et guide d'utilisation."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-01-XXT00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 2, low: 2 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Surveiller la stabilité des sélecteurs CSS si l'interface BoursoBank change (risque de fragilité du scraping)"
+      - "Vérifier en production que le parsing des transactions fonctionne correctement avec les différents formats de données BoursoBank"
+      - "Monitorer les performances du scraping navigateur (plus lent que HTTP direct)"
+      - "Valider l'authentification 2FA avec des credentials réels en environnement de test"
+
+quality_score: 94
+expires: "2025-02-XXT00:00:00Z"
+
+evidence:
+  tests_reviewed: 16
+  risks_identified: 4
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7, 8]
+    ac_gaps: []
+  integration_verifications:
+    iv1: PASS
+    iv2: PASS
+    iv3: PASS
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Aucun credential ou token loggé en clair. Cookies de session stockés uniquement dans l'instance du connecteur (pas en base de données). Gestion sécurisée de l'authentification 2FA. Import conditionnel de Playwright avec gestion gracieuse si non disponible."
+  performance:
+    status: PASS
+    notes: "Retry avec backoff exponentiel pour éviter la surcharge. Filtrage par date côté connecteur pour réduire la charge. Timeouts appropriés (15-30 secondes) pour les opérations Playwright. Note: Scraping navigateur plus lent que HTTP direct mais acceptable pour usage personnel."
+  reliability:
+    status: PASS
+    notes: "Retry automatique avec backoff exponentiel (max 3 tentatives) pour toutes les opérations. Gestion robuste des erreurs avec exceptions standardisées. Sélecteurs CSS multiples pour améliorer la robustesse. Structure préparée pour fallback si nécessaire."
+  maintainability:
+    status: PASS
+    notes: "Code bien structuré avec docstrings complètes et type hints. Documentation exhaustive incluant recherche des options techniques (boursorama-research.md) et guide d'utilisation (boursorama.md). Tests unitaires complets avec mocks facilitent la maintenance. Notes dans le code indiquent les points nécessitant des ajustements si l'interface change."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Considérer l'ajout de tests d'intégration avec l'interface web BoursoBank réelle (en environnement de test) pour valider les sélecteurs CSS et le parsing"
+      refs: ["backend/finance/connectors/boursorama.py", "backend/finance/connectors/tests/test_boursorama.py"]
+    - action: "Évaluer l'implémentation d'un fallback scraping HTTP si Playwright échoue après plusieurs tentatives"
+      refs: ["backend/finance/connectors/boursorama.py"]
+    - action: "Considérer l'ajout de métriques de performance (temps de scraping, nombre de transactions récupérées) pour monitoring"
+      refs: ["backend/finance/connectors/boursorama.py"]
+    - action: "Documenter la procédure de mise à jour des sélecteurs CSS si l'interface BoursoBank change dans la documentation opérationnelle"
+      refs: ["docs/connectors/boursorama.md"]
+    - action: "Valider la détection complète de doublons dans Story 1.6 (Service de Synchronisation) comme prévu"
+      refs: ["docs/stories/1.4.connecteur-boursorama.md"]

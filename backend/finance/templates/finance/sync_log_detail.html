@@ -1,0 +1,135 @@
+{% extends 'base.html' %}
+{% load finance_filters %}
+{% block title %}Détail du Log de Synchronisation{% endblock %}
+{% block content %}
+  <div class="mb-8">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+      <div>
+        <h1 class="text-3xl font-bold text-gray-900 mb-2">Détail du Log de Synchronisation</h1>
+        <p class="text-gray-600">Informations complètes sur cette synchronisation</p>
+      </div>
+      <a href="{% url 'sync_logs_list' %}" class="px-4 py-2 bg-gray-600 text-white rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors shadow-sm">
+        Retour aux logs
+      </a>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+    <!-- Informations principales -->
+    <div class="lg:col-span-2 space-y-6">
+      <!-- Informations générales -->
+      <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <h2 class="text-lg font-semibold text-gray-900 mb-4">Informations générales</h2>
+        <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Connexion bancaire</dt>
+            <dd class="mt-1 text-sm text-gray-900">
+              <a href="{% url 'bank_connection_update' log.bank_connection.id %}" class="text-primary hover:underline">
+                {{ log.bank_connection.account_name }}
+              </a>
+            </dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Provider</dt>
+            <dd class="mt-1">
+              <span class="px-3 py-1 text-xs font-medium rounded-full {% if log.bank_connection.provider == 'trade_republic' %}bg-purple-100 text-purple-800{% elif log.bank_connection.provider == 'boursorama' %}bg-blue-100 text-blue-800{% elif log.bank_connection.provider == 'hellobank' %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-800{% endif %}">
+                {{ log.bank_connection.get_provider_display }}
+              </span>
+            </dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Type de synchronisation</dt>
+            <dd class="mt-1 text-sm text-gray-900">{{ log.get_sync_type_display }}</dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Statut</dt>
+            <dd class="mt-1">
+              {% if log.status == 'success' %}
+                <span class="px-3 py-1 text-xs font-medium bg-green-100 text-green-800 rounded-full">✓ Succès</span>
+              {% elif log.status == 'error' %}
+                <span class="px-3 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-full">✗ Erreur</span>
+              {% else %}
+                <span class="px-3 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full">⟳ En cours</span>
+              {% endif %}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Date de début</dt>
+            <dd class="mt-1 text-sm text-gray-900">{{ log.started_at|date:"d/m/Y H:i:s" }}</dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Date de fin</dt>
+            <dd class="mt-1 text-sm text-gray-900">
+              {% if log.completed_at %}
+                {{ log.completed_at|date:"d/m/Y H:i:s" }}
+              {% else %}
+                <span class="text-gray-400">En cours...</span>
+              {% endif %}
+            </dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Durée</dt>
+            <dd class="mt-1 text-sm text-gray-900">{{ log.duration_formatted }}</dd>
+          </div>
+          <div>
+            <dt class="text-sm font-medium text-gray-500">Transactions synchronisées</dt>
+            <dd class="mt-1 text-sm text-gray-900 font-semibold">{{ log.transactions_count }}</dd>
+          </div>
+        </dl>
+      </div>
+
+      <!-- Message d'erreur -->
+      {% if log.status == 'error' and error_message_formatted %}
+        <div class="bg-white rounded-xl shadow-sm border border-red-200 p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold text-red-900">Message d'erreur</h2>
+            <button onclick="copyError()" class="px-3 py-1 bg-red-100 text-red-800 rounded-lg text-sm font-medium hover:bg-red-200 transition-colors flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+              </svg>
+              Copier
+            </button>
+          </div>
+          <div id="error-message" class="bg-red-50 border border-red-200 rounded-lg p-4 font-mono text-sm text-red-900 whitespace-pre-wrap overflow-x-auto">{{ error_message_formatted }}</div>
+          <div id="copy-feedback" class="hidden mt-2 text-sm text-green-600">✓ Message copié dans le presse-papier</div>
+        </div>
+      {% endif %}
+    </div>
+
+    <!-- Actions rapides -->
+    <div class="space-y-6">
+      <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <h2 class="text-lg font-semibold text-gray-900 mb-4">Actions</h2>
+        <div class="space-y-2">
+          <a href="{% url 'sync_logs_list' %}" class="block w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors text-center">
+            Retour aux logs
+          </a>
+          <a href="{% url 'bank_connection_update' log.bank_connection.id %}" class="block w-full px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors text-center">
+            Voir la connexion
+          </a>
+          {% if log.status == 'error' %}
+            <form method="post" action="{% url 'bank_connection_sync' log.bank_connection.id %}" class="mt-2">
+              {% csrf_token %}
+              <button type="submit" class="w-full px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors">
+                Réessayer la synchronisation
+              </button>
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function copyError() {
+      const errorMessage = document.getElementById('error-message').textContent;
+      navigator.clipboard.writeText(errorMessage).then(function() {
+        const feedback = document.getElementById('copy-feedback');
+        feedback.classList.remove('hidden');
+        setTimeout(function() {
+          feedback.classList.add('hidden');
+        }, 3000);
+      });
+    }
+  </script>
+{% endblock %}

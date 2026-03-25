@@ -1,0 +1,64 @@
+schema: 1
+story: "1.7"
+story_title: "Tâches Celery pour Synchronisation Automatique"
+gate: PASS
+status_reason: "Implémentation solide des tâches Celery pour synchronisation automatique avec configuration Celery Beat quotidienne, gestion robuste des erreurs avec retry automatique sélectif, logging structuré, et tests unitaires complets. Les tâches sont bien intégrées avec SyncService et prêtes pour utilisation en production."
+reviewer: "Quinn (Test Architect)"
+updated: "2025-01-XXT00:00:00Z"
+
+waiver: { active: false }
+
+top_issues: []
+
+risk_summary:
+  totals: { critical: 0, high: 0, medium: 1, low: 2 }
+  recommendations:
+    must_fix: []
+    monitor:
+      - "Surveiller les performances de Celery Beat lors de synchronisations avec beaucoup de comptes (potentiel timeout si > 100 comptes)"
+      - "Vérifier en production que le schedule Celery Beat fonctionne correctement et que les synchronisations quotidiennes s'exécutent bien"
+      - "Monitorer les logs Celery pour détecter les erreurs récurrentes ou les patterns d'échec de synchronisation"
+
+quality_score: 95
+expires: "2025-02-XXT00:00:00Z"
+
+evidence:
+  tests_reviewed: 13
+  risks_identified: 3
+  trace:
+    ac_covered: [1, 2, 3, 4, 5, 6, 7]
+    ac_gaps: []
+  integration_verifications:
+    iv1: PASS
+    iv2: PASS
+    iv3: PASS
+
+nfr_validation:
+  security:
+    status: PASS
+    notes: "Aucun credential ou token loggé en clair. Les tâches utilisent SyncService qui gère déjà la sécurité. Les erreurs sont loggées sans exposer d'informations sensibles."
+  performance:
+    status: PASS
+    notes: "Exécution asynchrone via Celery pour ne pas bloquer l'application. Utilisation de select_related pour optimiser les requêtes DB. Les synchronisations sont échelonnées naturellement par Celery. Configuration Celery Beat avec heure configurable (défaut: 2h du matin, heure de faible trafic)."
+  reliability:
+    status: PASS
+    notes: "Retry automatique avec backoff exponentiel uniquement pour erreurs temporaires (ConnectionTimeoutError, RateLimitError). Pas de retry pour erreurs définitives (InvalidCredentialsError). Gestion individuelle des erreurs par compte dans sync_all_bank_accounts() pour éviter d'arrêter toute la synchronisation. Configuration Celery Beat robuste avec schedule quotidien."
+  maintainability:
+    status: PASS
+    notes: "Code bien structuré avec docstrings complètes et type hints. Intégration propre avec SyncService créé dans Story 1.6. Tests unitaires complets (13 tests) avec mocks facilitent la maintenance. Configuration Celery Beat documentée avec variables d'environnement. Tâche existante snapshot_networth() conservée pour compatibilité."
+
+recommendations:
+  immediate: []
+  future:
+    - action: "Considérer l'ajout de métriques Celery (nombre de tâches réussies/échouées, temps d'exécution) pour monitoring"
+      refs: ["backend/finance/tasks.py"]
+    - action: "Évaluer l'implémentation d'une notification utilisateur complète (email/Django messages) en cas d'échec répété de synchronisation"
+      refs: ["backend/finance/tasks.py", "docs/stories/1.7.taches-celery-synchronisation-automatique.md"]
+    - action: "Considérer l'ajout de tests d'intégration avec Celery réel (en environnement de test) pour valider le schedule Beat"
+      refs: ["backend/finance/tests/test_tasks.py"]
+    - action: "Documenter la procédure de monitoring des tâches Celery dans la documentation opérationnelle"
+      refs: ["docs/stories/1.7.taches-celery-synchronisation-automatique.md"]
+    - action: "Valider l'utilisation des tâches depuis l'interface utilisateur dans Story 1.8 comme prévu"
+      refs: ["docs/stories/1.7.taches-celery-synchronisation-automatique.md", "docs/stories/1.8.interface-gestion-connexions-bancaires.md"]
+    - action: "Considérer l'ajout d'un mécanisme de rate limiting global pour éviter de surcharger les APIs bancaires lors de synchronisations multiples simultanées"
+      refs: ["backend/finance/tasks.py"]
