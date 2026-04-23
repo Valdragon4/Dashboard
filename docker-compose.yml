@@ -45,8 +45,18 @@ services:
     environment:
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
+      # Playwright laisse sa boucle asyncio dans un état "running" après certaines
+      # exceptions. Le worker Celery est un contexte synchrone pur (prefork) — cette
+      # variable dit à Django de ne pas bloquer les appels ORM dans ce contexte.
+      - DJANGO_ALLOW_ASYNC_UNSAFE=true
     volumes:
       - ./backend:/app
+    # host.docker.internal permet d'atteindre la machine hôte depuis le conteneur.
+    # Nécessaire pour router le trafic BoursoBank via un tunnel SSH SOCKS5 :
+    #   ssh -D 1080 -N -f user@ma-machine-perso  (sur le serveur)
+      # - BOURSOBANK_PROXY=socks5://host.docker.internal:1080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       db:
         condition: service_healthy
