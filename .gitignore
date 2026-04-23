@@ -58,6 +58,7 @@ mkdocs.yml.bak
 *.log
 *.pid
 *.sock
+backend/celerybeat-schedule
 
 # =============================
 # IDEs / local tooling

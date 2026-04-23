@@ -387,6 +387,22 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     if prev_income > 0:
         income_trend = ((income_float - prev_income) / prev_income) * 100
     
+    # Regex partagée pour détecter les catégories d'épargne/placement
+    savings_category_regex = r"(^|[^a-zA-ZÀ-ÿ])(epargnes?|épargnes?|investissements?|placements?)([^a-zA-ZÀ-ÿ]|$)"
+
+    def savings_transfer_total(queryset):
+        return abs(
+            float(
+                queryset.filter(amount__lt=0)
+                .filter(
+                    Q(category__name__iregex=savings_category_regex)
+                    | Q(category__parent__name__iregex=savings_category_regex)
+                )
+                .aggregate(total=Sum("amount"))["total"]
+                or 0
+            )
+        )
+
     # STATISTIQUES AVANCÉES - Analyse sur 6 mois
     stats_start = start_date - relativedelta(months=6)
     stats_start_dt = datetime.combine(stats_start, datetime.min.time())
@@ -413,12 +429,14 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         
         month_income = float(month_qs.filter(amount__gt=0).aggregate(total=Sum("amount"))["total"] or 0)
         month_expenses = abs(float(month_qs.filter(amount__lt=0).aggregate(total=Sum("amount"))["total"] or 0))
-        month_balance = month_income - month_expenses
+        month_savings_transfer = savings_transfer_total(month_qs)
+        month_effective_expenses = month_expenses - month_savings_transfer
+        month_balance = month_income - month_effective_expenses
         
         monthly_stats.append({
             "label": month_start.strftime("%b %Y"),
             "income": month_income,
-            "expenses": month_expenses,
+            "expenses": month_effective_expenses,
             "balance": month_balance,
         })
     
@@ -432,7 +450,13 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     worst_month = min(monthly_stats, key=lambda x: x["balance"]) if monthly_stats else None
     
     # Taux d'épargne
-    savings_rate = (income_float - expenses_float) / income_float * 100 if income_float > 0 else 0
+    # Les versements vers l'épargne/placements sont enregistrés comme dépenses,
+    # mais doivent compter comme épargne dans ce ratio.
+    savings_transfer_expenses = savings_transfer_total(qs)
+    stats_expenses = expenses_float - savings_transfer_expenses
+    stats_period_balance = income_float - stats_expenses
+    net_savings = stats_period_balance
+    savings_rate = (net_savings / income_float) * 100 if income_float > 0 else 0
     
     # Projection pour le mois suivant (basée sur la moyenne des 3 derniers mois)
     if len(monthly_stats) >= 3:
@@ -442,8 +466,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         projected_balance = projected_income - projected_expenses
     else:
         projected_income = income_float
-        projected_expenses = expenses_float
-        projected_balance = income_float - expenses_float
+        projected_expenses = stats_expenses
+        projected_balance = stats_period_balance
 
     # Générer le label de période
     if start_date == end_date - relativedelta(days=1):
@@ -582,8 +606,10 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     context = {
         "income": float(income),
         "expenses": float(expenses),
+        "stats_expenses": float(stats_expenses),
         "balance": float(real_balance),  # Solde courant uniquement
         "period_balance": float(period_balance),
+        "stats_period_balance": float(stats_period_balance),
         "checking_balance": float(checking_balance),
         "savings_balance": float(savings_balance),
         "total_invested": float(total_invested),

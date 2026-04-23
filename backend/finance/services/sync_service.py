@@ -27,15 +27,18 @@ from finance.connectors.powens import PowensConnector
 from finance.models import Account, BankConnection, SyncLog, Transaction
 from finance.services.encryption_service import EncryptionService, EncryptionError
 
-# Import conditionnel des connecteurs Playwright
+# Import conditionnel des connecteurs
 try:
     from finance.connectors.boursorama import BoursoBankConnector
+except ImportError:
+    BoursoBankConnector = None
+
+try:
     from finance.connectors.hellobank import HelloBankConnector
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
-    PLAYWRIGHT_AVAILABLE = False
-    BoursoBankConnector = None
     HelloBankConnector = None
+    PLAYWRIGHT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +75,10 @@ class SyncService:
         if provider == BankConnection.Provider.TRADE_REPUBLIC:
             return TradeRepublicConnector()
         elif provider == BankConnection.Provider.BOURSORAMA:
-            if not PLAYWRIGHT_AVAILABLE or BoursoBankConnector is None:
+            if BoursoBankConnector is None:
                 raise ImportError(
-                    "Playwright n'est pas installé. Installez-le avec: pip install playwright && playwright install"
+                    "Le connecteur BoursoBank nécessite boursobank-scraper "
+                    "(et Python >= 3.13)."
                 )
             return BoursoBankConnector()
         elif provider == BankConnection.Provider.HELLOBANK:
@@ -116,6 +120,40 @@ class SyncService:
             return False  # Ne pas retry les erreurs d'authentification
         return False  # Par défaut, ne pas retry
 
+    # Cache module-level pour éviter N requêtes Category par sync
+    _category_cache: Dict[str, Optional["Category"]] = {}
+
+    @staticmethod
+    def _resolve_category(raw: Dict) -> Optional["Category"]:
+        """
+        Résout la catégorie à partir des labels BoursoBank stockés dans raw.
+        Cherche d'abord par (label exact, parent_label), puis par label seul.
+        Utilise un cache en mémoire pour éviter une requête par transaction.
+        """
+        from finance.models import Category as Cat
+
+        label = (raw.get("boursobank_category_label") or "").strip()
+        if not label:
+            return None
+
+        cache_key = label
+        if cache_key in SyncService._category_cache:
+            return SyncService._category_cache[cache_key]
+
+        parent_label = (raw.get("boursobank_category_parent_label") or "").strip()
+
+        cat = None
+        if parent_label:
+            cat = Cat.objects.filter(
+                name=label,
+                parent__name=parent_label,
+            ).first()
+        if cat is None:
+            cat = Cat.objects.filter(name=label).first()
+
+        SyncService._category_cache[cache_key] = cat
+        return cat
+
     @staticmethod
     def _upsert_transaction_from_sync(
         account: Account,
@@ -125,7 +163,8 @@ class SyncService:
         """
         Crée ou met à jour une transaction depuis une synchronisation.
 
-        Réutilise la logique de déduplication de `_upsert_transaction` depuis `loader.py`.
+        La catégorie est automatiquement résolue depuis les labels BoursoBank
+        présents dans raw (boursobank_category_label / boursobank_category_parent_label).
 
         Args:
             account: Compte associé à la transaction
@@ -150,11 +189,16 @@ class SyncService:
         if "source" not in raw:
             raw["source"] = source
 
+        # Résoudre la catégorie depuis les labels BoursoBank
+        category = SyncService._resolve_category(raw)
+
         # Préparer les defaults pour update_or_create
         defaults = {
             "currency": account.currency or "EUR",
             "raw": raw,
         }
+        if category is not None:
+            defaults["category"] = category
 
         # Priorité de déduplication :
         # 1. Si on a un transaction_id → utiliser celui-ci (priorité 1)
@@ -198,7 +242,6 @@ class SyncService:
             )[0]
 
     @staticmethod
-    @transaction.atomic
     def sync_account(
         account: Account,
         sync_type: str = SyncLog.SyncType.AUTOMATIC,
@@ -230,6 +273,12 @@ class SyncService:
 
         Raises:
             ValueError: Si le compte n'a pas de bank_connection ou si auto_sync_enabled=False
+
+        Note:
+            Le SyncLog initial (status=STARTED) et la mise à jour du statut SYNCING
+            sont committés immédiatement (hors transaction atomique) pour être visibles
+            en temps réel dans le dashboard pendant la sync. Seules les écritures
+            de transactions sont atomiques.
         """
         # Vérifications préliminaires
         if not account.bank_connection:
@@ -245,28 +294,27 @@ class SyncService:
             }
 
         bank_connection = account.bank_connection
-        sync_log = None
         connector = None
         transactions_count = 0
 
+        # Créer le SyncLog et mettre à jour le statut AVANT toute opération longue.
+        # Ces writes sont committés immédiatement (pas dans un bloc atomic) pour
+        # être visibles dans le dashboard en temps réel pendant la sync.
+        sync_log = SyncLog.objects.create(
+            bank_connection=bank_connection,
+            sync_type=sync_type,
+            status=SyncLog.Status.STARTED,
+            started_at=timezone.now(),
+        )
+        bank_connection.sync_status = BankConnection.SyncStatus.SYNCING
+        bank_connection.save()
+
+        logger.info(
+            f"Début de synchronisation pour le compte {account.id} "
+            f"(provider: {bank_connection.provider}, sync_type: {sync_type})"
+        )
+
         try:
-            # Créer le SyncLog initial
-            sync_log = SyncLog.objects.create(
-                bank_connection=bank_connection,
-                sync_type=sync_type,
-                status=SyncLog.Status.STARTED,
-                started_at=timezone.now(),
-            )
-
-            # Mettre à jour le statut de la BankConnection
-            bank_connection.sync_status = BankConnection.SyncStatus.SYNCING
-            bank_connection.save()
-
-            logger.info(
-                f"Début de synchronisation pour le compte {account.id} "
-                f"(provider: {bank_connection.provider}, sync_type: {sync_type})"
-            )
-
             # Déchiffrer les credentials
             try:
                 credentials = EncryptionService.decrypt_credentials(
@@ -310,6 +358,10 @@ class SyncService:
             # Gérer l'authentification 2FA si nécessaire
             if auth_result and auth_result.get("requires_2fa"):
                 logger.info("Authentification 2FA requise")
+                try:
+                    connector.disconnect()
+                except Exception:
+                    pass
                 sync_log.status = SyncLog.Status.ERROR
                 sync_log.completed_at = timezone.now()
                 sync_log.error_message = "Authentification 2FA requise"
@@ -368,14 +420,20 @@ class SyncService:
                     else:
                         raise
 
-            # Synchroniser les transactions (détection de doublons)
+            # Insérer chaque transaction dans son propre savepoint atomique.
+            # Si une transaction échoue (contrainte, données invalides…), seul ce
+            # savepoint est annulé — les autres continuent. Sans ce découpage, la
+            # première exception marque le bloc atomique parent comme "needs rollback"
+            # et toutes les insertions suivantes échouent avec
+            # "An error occurred in the current transaction".
             source = bank_connection.provider
 
             for transaction_data in transactions_data:
                 try:
-                    SyncService._upsert_transaction_from_sync(
-                        account, transaction_data, source
-                    )
+                    with transaction.atomic():
+                        SyncService._upsert_transaction_from_sync(
+                            account, transaction_data, source
+                        )
                     transactions_count += 1
                 except Exception as e:
                     logger.warning(
@@ -403,6 +461,24 @@ class SyncService:
                 connector.disconnect()
             except Exception as e:
                 logger.warning(f"Erreur lors de la déconnexion du connecteur: {str(e)}")
+
+            # Ancrer le solde live sur le compte.
+            # Le dashboard calcule : initial_balance + sum(transactions).
+            # Pour que ce calcul donne toujours le vrai solde bancaire, on recalcule
+            # initial_balance = live_balance - sum(toutes les transactions du compte).
+            # Ainsi la formule est toujours exacte, même si des transactions manquent.
+            if balance is not None:
+                from django.db.models import Sum as _Sum
+                tx_sum = Transaction.objects.filter(account=account).aggregate(
+                    total=_Sum("amount")
+                )["total"] or Decimal("0")
+                account.initial_balance = balance - tx_sum
+                account.balance_snapshot_date = timezone.now().date()
+                account.save(update_fields=["initial_balance", "balance_snapshot_date"])
+                logger.info(
+                    f"Solde ancré pour le compte {account.id}: "
+                    f"live={balance}, tx_sum={tx_sum}, initial_balance={account.initial_balance}"
+                )
 
             # Mettre à jour le SyncLog en cas de succès
             sync_log.status = SyncLog.Status.SUCCESS
@@ -435,12 +511,11 @@ class SyncService:
             )
 
             # Mettre à jour le SyncLog en cas d'erreur
-            if sync_log:
-                sync_log.status = SyncLog.Status.ERROR
-                sync_log.completed_at = timezone.now()
-                sync_log.error_message = error_msg[:1000]  # Tronquer si trop long
-                sync_log.transactions_count = transactions_count if "transactions_count" in locals() else 0
-                sync_log.save()
+            sync_log.status = SyncLog.Status.ERROR
+            sync_log.completed_at = timezone.now()
+            sync_log.error_message = error_msg[:1000]  # Tronquer si trop long
+            sync_log.transactions_count = transactions_count
+            sync_log.save()
 
             # Mettre à jour la BankConnection en cas d'erreur
             bank_connection.sync_status = BankConnection.SyncStatus.ERROR
@@ -455,7 +530,7 @@ class SyncService:
 
             return {
                 "success": False,
-                "transactions_count": transactions_count if "transactions_count" in locals() else 0,
-                "sync_log_id": sync_log.id if sync_log else None,
+                "transactions_count": transactions_count,
+                "sync_log_id": sync_log.id,
                 "error": error_msg,
             }
