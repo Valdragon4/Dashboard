@@ -62,7 +62,7 @@ class Transaction(models.Model):
     posted_at = models.DateTimeField()
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     currency = models.CharField(max_length=8, default="EUR")
-    description = models.CharField(max_length=255, blank=True)
+    description = models.CharField(max_length=512, blank=True)
     counterparty = models.CharField(max_length=255, blank=True)
     category = models.ForeignKey(Category, null=True, blank=True, on_delete=models.SET_NULL)
     is_transfer = models.BooleanField(default=False)

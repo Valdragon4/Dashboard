@@ -378,8 +378,8 @@
         </div>
         <div class="text-2xl font-bold text-gray-900 mb-1"><span class="amount-value">{{ avg_6m_balance|floatformat:0 }} €</span></div>
         <div class="text-xs text-gray-600">
-          <span class="{% if period_balance >= avg_6m_balance %}text-green-600{% else %}text-red-600{% endif %} font-medium">
-            {% if period_balance >= avg_6m_balance %}+{% endif %}{{ period_balance|floatformat:0|add:"-"|add:avg_6m_balance|floatformat:0 }} € vs moy.
+          <span class="{% if stats_period_balance >= avg_6m_balance %}text-green-600{% else %}text-red-600{% endif %} font-medium">
+            {% if stats_period_balance >= avg_6m_balance %}+{% endif %}{{ stats_period_balance|floatformat:0|add:"-"|add:avg_6m_balance|floatformat:0 }} € vs moy.
           </span>
         </div>
       </div>
@@ -475,9 +475,9 @@
           <div class="flex items-center justify-between">
             <span class="text-sm text-gray-600">Dépenses</span>
             <div class="text-right">
-              <div class="text-lg font-semibold text-gray-900 amount-value">{{ expenses|floatformat:0 }} €</div>
-              <div class="text-xs {% if expenses <= avg_6m_expenses %}text-green-600{% else %}text-red-600{% endif %} amount-value">
-                {% if expenses > avg_6m_expenses %}+{% endif %}{{ expenses|floatformat:0|add:"-"|add:avg_6m_expenses|floatformat:0 }} € (moy: {{ avg_6m_expenses|floatformat:0 }} €)
+              <div class="text-lg font-semibold text-gray-900 amount-value">{{ stats_expenses|floatformat:0 }} €</div>
+              <div class="text-xs {% if stats_expenses <= avg_6m_expenses %}text-green-600{% else %}text-red-600{% endif %} amount-value">
+                {% if stats_expenses > avg_6m_expenses %}+{% endif %}{{ stats_expenses|floatformat:0|add:"-"|add:avg_6m_expenses|floatformat:0 }} € (moy: {{ avg_6m_expenses|floatformat:0 }} €)
               </div>
             </div>
           </div>
@@ -485,8 +485,8 @@
             <div class="flex items-center justify-between">
               <span class="text-sm font-medium text-gray-700">Différence</span>
               <div class="text-right">
-                <div class="text-xl font-bold {% if period_balance >= avg_6m_balance %}text-green-600{% else %}text-red-600{% endif %}">
-                  {% if period_balance >= avg_6m_balance %}Meilleur{% else %}Moins bon{% endif %}
+                <div class="text-xl font-bold {% if stats_period_balance >= avg_6m_balance %}text-green-600{% else %}text-red-600{% endif %}">
+                  {% if stats_period_balance >= avg_6m_balance %}Meilleur{% else %}Moins bon{% endif %}
                 </div>
                 <div class="text-xs text-gray-600">que la moyenne</div>
               </div>

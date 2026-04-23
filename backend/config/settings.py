@@ -76,6 +76,22 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Celery
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
+CELERY_TIMEZONE = "Europe/Paris"
+
+from celery.schedules import crontab  # noqa: E402
+
+CELERY_BEAT_SCHEDULE = {
+    # Synchronisation bancaire tous les jours à 00h00
+    "sync-all-bank-accounts-daily": {
+        "task": "finance.tasks.sync_all_bank_accounts",
+        "schedule": crontab(hour=0, minute=0),
+    },
+    # Nettoyage des anciens logs de sync tous les jours à 01h00
+    "cleanup-sync-logs-daily": {
+        "task": "finance.tasks.cleanup_old_sync_logs",
+        "schedule": crontab(hour=1, minute=0),
+    },
+}
 
 CORS_ALLOW_ALL_ORIGINS = True
 
@@ -134,5 +150,22 @@ LOGGING = {
 # pour réduire les 403 sur api.traderepublic.com lorsque app.traderepublic.com est OK dans le navigateur.
 # Désactiver : TRADEPUBLIC_USE_PLAYWRIGHT_INITIATE=0
 TRADEPUBLIC_USE_PLAYWRIGHT_INITIATE = os.getenv("TRADEPUBLIC_USE_PLAYWRIGHT_INITIATE", "1") == "1"
+
+# BoursoBank scraper:
+# - timeout Playwright global pour les waits/navigation
+# - fenêtre d'attente supplémentaire quand BoursoBank demande une sécurisation
+# - proxy SOCKS5/HTTP pour contourner le blocage des IP de datacenter par BoursoBank
+#   (BoursoBank bloque les IP d'hébergeurs ; router via une IP résidentielle est requis
+#    pour la phase de sécurisation/2FA)
+#   Exemple : BOURSOBANK_PROXY=socks5://localhost:1080
+#   Mettre en place le tunnel SSH côté serveur :
+#     ssh -D 1080 -N -f user@ma-machine-perso
+#   Puis exposer le port dans docker-compose si le worker tourne dans Docker.
+BOURSOBANK_TIMEOUT_MS = int(os.getenv("BOURSOBANK_TIMEOUT_MS", "15000"))
+BOURSOBANK_SECURITY_WAIT_SECONDS = int(os.getenv("BOURSOBANK_SECURITY_WAIT_SECONDS", "180"))
+BOURSOBANK_HEADLESS = os.getenv("BOURSOBANK_HEADLESS", "1") == "1"
+BOURSOBANK_SAVE_TRACE = os.getenv("BOURSOBANK_SAVE_TRACE", "1") == "1"
+BOURSOBANK_DATA_DIR = os.getenv("BOURSOBANK_DATA_DIR", str(BASE_DIR / "boursobank-data"))
+BOURSOBANK_PROXY = os.getenv("BOURSOBANK_PROXY", "")  # ex: "socks5://host.docker.internal:1080"
 
 
