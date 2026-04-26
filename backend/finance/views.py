@@ -713,48 +713,43 @@ def transactions(request: HttpRequest) -> HttpResponse:
         for account_id_on_page in accounts_on_page:
             account = Account.objects.get(id=account_id_on_page)
             
-            # Pour Hello Bank et Trade Republic, calculer depuis le début (depuis la transaction la plus ancienne)
-            if account.provider in ("hellobank", "traderepublic"):
-                # Partir de initial_balance ou 0
-                account_balances[account_id_on_page] = float(account.initial_balance or 0)
+            # Partir de initial_balance ou 0
+            account_balances[account_id_on_page] = float(account.initial_balance or 0)
+            
+            # Calculer le solde pour toutes les transactions jusqu'à la première de la page
+            # Récupérer toutes les transactions de ce compte dans l'ordre chronologique jusqu'à la première de la page
+            first_tx_on_page = None
+            for tx in page.object_list:
+                if tx.account_id == account_id_on_page:
+                    if first_tx_on_page is None:
+                        first_tx_on_page = tx
+                    elif tx.posted_at < first_tx_on_page.posted_at or (
+                        tx.posted_at == first_tx_on_page.posted_at and (
+                            (tx.account_balance is not None and first_tx_on_page.account_balance is not None and tx.account_balance < first_tx_on_page.account_balance) or
+                            (tx.account_balance is None and first_tx_on_page.account_balance is not None) or
+                            (tx.account_balance == first_tx_on_page.account_balance and tx.id < first_tx_on_page.id) or
+                            (tx.account_balance is None and first_tx_on_page.account_balance is None and tx.id < first_tx_on_page.id)
+                        )
+                    ):
+                        first_tx_on_page = tx
+            
+            if first_tx_on_page:
+                # Récupérer toutes les transactions avant la première de la page
+                all_txs_before = Transaction.objects.filter(
+                    account_id=account_id_on_page,
+                    account__owner=request.user
+                ).order_by("posted_at", "account_balance", "id")
                 
-                # Calculer le solde pour toutes les transactions jusqu'à la première de la page
-                # Récupérer toutes les transactions de ce compte dans l'ordre chronologique jusqu'à la première de la page
-                first_tx_on_page = None
-                for tx in page.object_list:
-                    if tx.account_id == account_id_on_page:
-                        if first_tx_on_page is None:
-                            first_tx_on_page = tx
-                        elif tx.posted_at < first_tx_on_page.posted_at or (
-                            tx.posted_at == first_tx_on_page.posted_at and (
-                                (tx.account_balance is not None and first_tx_on_page.account_balance is not None and tx.account_balance < first_tx_on_page.account_balance) or
-                                (tx.account_balance is None and first_tx_on_page.account_balance is not None) or
-                                (tx.account_balance == first_tx_on_page.account_balance and tx.id < first_tx_on_page.id) or
-                                (tx.account_balance is None and first_tx_on_page.account_balance is None and tx.id < first_tx_on_page.id)
-                            )
-                        ):
-                            first_tx_on_page = tx
-                
-                if first_tx_on_page:
-                    # Récupérer toutes les transactions avant la première de la page
-                    all_txs_before = Transaction.objects.filter(
-                        account_id=account_id_on_page,
-                        account__owner=request.user
-                    ).order_by("posted_at", "account_balance", "id")
-                    
-                    for prev_tx in all_txs_before:
-                        if prev_tx.posted_at < first_tx_on_page.posted_at or (
-                            prev_tx.posted_at == first_tx_on_page.posted_at and (
-                                (prev_tx.account_balance is not None and first_tx_on_page.account_balance is not None and prev_tx.account_balance < first_tx_on_page.account_balance) or
-                                (prev_tx.account_balance is None and first_tx_on_page.account_balance is not None) or
-                                (prev_tx.account_balance == first_tx_on_page.account_balance and prev_tx.id < first_tx_on_page.id) or
-                                (prev_tx.account_balance is None and first_tx_on_page.account_balance is None and prev_tx.id < first_tx_on_page.id)
-                            )
-                        ):
-                            account_balances[account_id_on_page] += float(prev_tx.amount)
-            else:
-                # Pour les autres comptes, utiliser initial_balance
-                account_balances[account_id_on_page] = float(account.initial_balance or 0)
+                for prev_tx in all_txs_before:
+                    if prev_tx.posted_at < first_tx_on_page.posted_at or (
+                        prev_tx.posted_at == first_tx_on_page.posted_at and (
+                            (prev_tx.account_balance is not None and first_tx_on_page.account_balance is not None and prev_tx.account_balance < first_tx_on_page.account_balance) or
+                            (prev_tx.account_balance is None and first_tx_on_page.account_balance is not None) or
+                            (prev_tx.account_balance == first_tx_on_page.account_balance and prev_tx.id < first_tx_on_page.id) or
+                            (prev_tx.account_balance is None and first_tx_on_page.account_balance is None and prev_tx.id < first_tx_on_page.id)
+                        )
+                    ):
+                        account_balances[account_id_on_page] += float(prev_tx.amount)
     
     # Si ce n'est pas la première page, calculer le solde jusqu'à la première transaction de la page
     # IMPORTANT: Pour chaque compte, on doit compter uniquement les transactions de ce compte

@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16-alpine
+    mem_limit: 512m
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-dashboard}
       POSTGRES_USER: ${POSTGRES_USER:-dashboard_user}
@@ -17,8 +18,11 @@ services:
 
   web:
     build: ./backend
+    mem_limit: 512m
     command: bash -c "python manage.py migrate && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --timeout 300 --workers 2"
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
@@ -35,16 +39,21 @@ services:
 
   redis:
     image: redis:7-alpine
+    mem_limit: 128m
     ports:
       - "6380:6379"
 
   worker:
     build: ./backend
+    mem_limit: 512m
     command: celery -A config worker -l info
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432
+      - DJANGO_ALLOW_ASYNC_UNSAFE=true
     volumes:
       - ./backend:/app
     depends_on:
@@ -55,8 +64,11 @@ services:
 
   beat:
     build: ./backend
+    mem_limit: 256m
     command: celery -A config beat -l info
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - POSTGRES_HOST=db
       - POSTGRES_PORT=5432

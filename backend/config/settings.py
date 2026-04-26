@@ -161,11 +161,13 @@ TRADEPUBLIC_USE_PLAYWRIGHT_INITIATE = os.getenv("TRADEPUBLIC_USE_PLAYWRIGHT_INIT
 #   Mettre en place le tunnel SSH côté serveur :
 #     ssh -D 1080 -N -f user@ma-machine-perso
 #   Puis exposer le port dans docker-compose si le worker tourne dans Docker.
-BOURSOBANK_TIMEOUT_MS = int(os.getenv("BOURSOBANK_TIMEOUT_MS", "15000"))
-BOURSOBANK_SECURITY_WAIT_SECONDS = int(os.getenv("BOURSOBANK_SECURITY_WAIT_SECONDS", "180"))
+BOURSOBANK_TIMEOUT_MS = int(os.getenv("BOURSOBANK_TIMEOUT_MS", "60000"))
+BOURSOBANK_AUTH_TIMEOUT_MS = int(os.getenv("BOURSOBANK_AUTH_TIMEOUT_MS", "30000"))
+BOURSOBANK_TX_TIMEOUT_MS = int(os.getenv("BOURSOBANK_TX_TIMEOUT_MS", "30000"))
+BOURSOBANK_BALANCE_TIMEOUT_MS = int(os.getenv("BOURSOBANK_BALANCE_TIMEOUT_MS", "10000"))
 BOURSOBANK_HEADLESS = os.getenv("BOURSOBANK_HEADLESS", "1") == "1"
-BOURSOBANK_SAVE_TRACE = os.getenv("BOURSOBANK_SAVE_TRACE", "1") == "1"
 BOURSOBANK_DATA_DIR = os.getenv("BOURSOBANK_DATA_DIR", str(BASE_DIR / "boursobank-data"))
-BOURSOBANK_PROXY = os.getenv("BOURSOBANK_PROXY", "")  # ex: "socks5://host.docker.internal:1080"
+BOURSOBANK_PROXY = os.getenv("BOURSOBANK_PROXY", "")
+BOURSOBANK_ACCOUNT_NUMBER = os.getenv("BOURSOBANK_ACCOUNT_NUMBER", "")
 
 
