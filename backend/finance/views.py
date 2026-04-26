@@ -1334,10 +1334,16 @@ def traderepublic_initiate_login(request: HttpRequest) -> JsonResponse:
         return JsonResponse({"error": "Méthode non autorisée"}, status=405)
     
     try:
+        logger = logging.getLogger(__name__)
+        raw_body = (request.body or b"").decode("utf-8", errors="replace")
         try:
             data = json.loads(request.body or b"{}")
         except json.JSONDecodeError:
             return JsonResponse({"error": "Requête JSON invalide ou vide."}, status=400)
+        safe_data = dict(data) if isinstance(data, dict) else {"_invalid_payload_type": type(data).__name__}
+        if "pin" in safe_data:
+            safe_data["pin"] = "***"
+        logger.info("TR initiate request json=%s", safe_data)
         phone_number = data.get("phone_number")
         pin = data.get("pin")
         account_name = data.get("account_name", "Trade Republic")
