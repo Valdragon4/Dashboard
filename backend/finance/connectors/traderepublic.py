@@ -8,6 +8,7 @@ pour l'intégrer dans l'architecture modulaire de connecteurs bancaires.
 import asyncio
 import json
 import logging
+import re
 import time
 from datetime import datetime
 from decimal import Decimal
@@ -27,6 +28,7 @@ from finance.connectors.base import (
     RateLimitError,
     BaseBankConnector,
 )
+from finance.services.market_price_service import MarketPriceService
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +70,10 @@ class TradeRepublicConnector(BaseBankConnector):
         self.session = create_tr_requests_session()
         self._waf_token: str = ""
         self._device_info: str = ""
+        self._price_service = MarketPriceService()
+
+    INVESTABLE_EVENT_TYPES = {"TRADE_INVOICE", "SAVINGS_PLAN_INVOICE_CREATED"}
+    _ISIN_FROM_ICON_REGEX = re.compile(r"/([A-Z]{2}[A-Z0-9]{9}\d)/")
 
     @property
     def provider_name(self) -> str:
@@ -437,8 +443,11 @@ class TradeRepublicConnector(BaseBankConnector):
             "type": transaction.get("type"),
             "instrument": transaction.get("instrument"),
             "isin": transaction.get("isin"),
+            "eventType": transaction.get("eventType"),
             "raw_data": transaction,  # Conserver toutes les données originales
         }
+
+        self._enrich_investment_valuation(raw=raw, transaction=transaction)
 
         return {
             "posted_at": posted_at,
@@ -446,6 +455,69 @@ class TradeRepublicConnector(BaseBankConnector):
             "description": description,
             "raw": raw,
         }
+
+    @staticmethod
+    def _parse_french_decimal(value: Optional[str]) -> Optional[Decimal]:
+        if value is None:
+            return None
+        cleaned = str(value).replace("\u202f", " ").replace("\xa0", " ").strip()
+        if not cleaned:
+            return None
+        cleaned = cleaned.replace("€", "").replace(" ", "").replace(",", ".")
+        try:
+            return Decimal(cleaned)
+        except Exception:
+            return None
+
+    @classmethod
+    def _extract_isin_from_icon(cls, icon: Optional[str]) -> Optional[str]:
+        if not icon:
+            return None
+        match = cls._ISIN_FROM_ICON_REGEX.search(str(icon))
+        if match:
+            return match.group(1)
+        return None
+
+    def _enrich_investment_valuation(self, *, raw: Dict, transaction: Dict) -> None:
+        event_type = transaction.get("eventType")
+        raw["is_investment_event"] = event_type in self.INVESTABLE_EVENT_TYPES
+        if not raw["is_investment_event"]:
+            return
+
+        isin = (
+            raw.get("isin")
+            or self._extract_isin_from_icon(transaction.get("icon"))
+            or self._extract_isin_from_icon((transaction.get("avatar") or {}).get("asset"))
+        )
+        quantity = self._parse_french_decimal(transaction.get("Titres"))
+        invested_total = self._parse_french_decimal(transaction.get("Total"))
+        if invested_total is None:
+            invested_total = abs(Decimal(str(transaction.get("amount", {}).get("value", "0"))))
+
+        raw["isin"] = isin
+        raw["investment_quantity"] = str(quantity) if quantity is not None else None
+        raw["investment_total"] = str(invested_total) if invested_total is not None else None
+        raw["investment_event_type"] = event_type
+
+        if not isin or quantity is None or invested_total is None:
+            raw["pricing_unavailable"] = True
+            return
+
+        price_data = self._price_service.get_price_for_isin(isin)
+        if not price_data:
+            raw["pricing_unavailable"] = True
+            return
+
+        current_price = price_data["price"]
+        current_value = quantity * current_price
+        profit_loss = current_value - invested_total
+        raw["current_price"] = str(current_price)
+        raw["current_value"] = str(current_value)
+        raw["profit_loss"] = str(profit_loss)
+        raw["pricing_source"] = price_data.get("source")
+        raw["pricing_symbol"] = price_data.get("symbol")
+        raw["priced_at"] = price_data.get("priced_at")
+        raw["pricing_unavailable"] = False
 
     def get_balance(self, account) -> Decimal:
         """

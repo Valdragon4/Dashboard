@@ -170,4 +170,17 @@ BOURSOBANK_DATA_DIR = os.getenv("BOURSOBANK_DATA_DIR", str(BASE_DIR / "boursoban
 BOURSOBANK_PROXY = os.getenv("BOURSOBANK_PROXY", "")
 BOURSOBANK_ACCOUNT_NUMBER = os.getenv("BOURSOBANK_ACCOUNT_NUMBER", "")
 
+# Trade Republic Bridge (Bun/TS)
+TR_BRIDGE_ENABLED = os.getenv("TR_BRIDGE_ENABLED", "0") == "1"
+TR_BRIDGE_SHADOW_MODE = os.getenv("TR_BRIDGE_SHADOW_MODE", "0") == "1"
+TR_BRIDGE_BUN_BIN = os.getenv("TR_BRIDGE_BUN_BIN", "bun")
+TR_BRIDGE_SCRIPT_PATH = os.getenv("TR_BRIDGE_SCRIPT_PATH", "")
+TR_BRIDGE_CWD = os.getenv("TR_BRIDGE_CWD", "")
+TR_BRIDGE_TIMEOUT_SECONDS = int(os.getenv("TR_BRIDGE_TIMEOUT_SECONDS", "90"))
+TR_BRIDGE_RAW_OUTPUT_MAX_CHARS = int(os.getenv("TR_BRIDGE_RAW_OUTPUT_MAX_CHARS", "20000"))
+TR_BRIDGE_TX_LIMIT = int(os.getenv("TR_BRIDGE_TX_LIMIT", "80"))
+import json as _json
+TR_ACCOUNT_TYPE_MAP: dict[str, str] = _json.loads(os.getenv("TR_ACCOUNT_TYPE_MAP", "{}"))
+del _json
+
 

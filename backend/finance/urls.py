@@ -17,6 +17,7 @@ urlpatterns = [
     path("import/traderepublic", views.traderepublic_import, name="traderepublic_import"),
     path("api/traderepublic/initiate", views.traderepublic_initiate_login, name="traderepublic_initiate_login"),
     path("api/traderepublic/resend-2fa", views.traderepublic_resend_2fa, name="traderepublic_resend_2fa"),
+    path("api/traderepublic/verify-bridge", views.traderepublic_verify_for_bridge, name="traderepublic_verify_for_bridge"),
     path("api/traderepublic/verify", views.traderepublic_verify_and_scrape, name="traderepublic_verify_and_scrape"),
     path("api/investments/update-valuation", views.update_investment_valuation, name="update_investment_valuation"),
     path("api/accounts/<int:account_id>/toggle-dashboard", views.toggle_account_in_dashboard, name="toggle_account_in_dashboard"),

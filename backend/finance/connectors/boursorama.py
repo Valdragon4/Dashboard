@@ -52,7 +52,8 @@ class BoursoBankConnector(BaseBankConnector):
         if not SCRAPER_AVAILABLE:
             raise ImportError(
                 "boursobank_scraper non disponible. "
-                "Installez-le avec: pip install boursobank-scraper"
+                "Installez-le avec: pip install boursobank-scraper "
+                "(Python 3.13+ requis)"
             )
         self._scraper: Optional["BoursoScraper"] = None
         self._accounts: List["BoursoAccount"] = []

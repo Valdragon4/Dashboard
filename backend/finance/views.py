@@ -15,20 +15,193 @@ from pathlib import Path
 import os
 import csv
 import logging
+import re
 
 from django.conf import settings
 from django.utils import timezone
 
-from .models import Transaction, Account, InvestmentHolding, Category, BankConnection, SyncLog
+from .models import (
+    Transaction,
+    Account,
+    InvestmentHolding,
+    Category,
+    BankConnection,
+    SyncLog,
+    TradeRepublicValuationSnapshot,
+    TradeRepublicPortfolioSnapshot,
+)
 from .forms import AccountForm, TransactionForm, ImportStatementForm, BankConnectionForm
 from .importers.loader import import_bank_statement_from_csv, import_traderepublic_from_csv
 from .importers.traderepublic_scraper import TradeRepublicScraper
+from .services.tr_bridge_sync import sync_bridge_snapshot_with_auth_handling, get_bridge_auth_status_safe
+from .services.tr_bridge_client import TradeRepublicBridgeError
+from .services.encryption_service import EncryptionService, EncryptionError
 from django.http import JsonResponse
 from django.utils.safestring import mark_safe
 import json
 import PyPDF2
 import openai
 from decimal import Decimal
+
+
+def _safe_decimal(value) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def _get_latest_bridge_snapshot(account: Account, valuation_end: datetime):
+    return (
+        TradeRepublicValuationSnapshot.objects.filter(
+            account=account,
+            source=TradeRepublicValuationSnapshot.Source.BRIDGE_AUTO,
+            auth_status=TradeRepublicValuationSnapshot.AuthStatus.AUTHENTICATED,
+            source_timestamp__lte=valuation_end,
+        )
+        .order_by("-source_timestamp", "-id")
+        .first()
+    )
+
+
+def _bridge_portfolio_totals(snapshot: TradeRepublicValuationSnapshot) -> dict[str, Decimal]:
+    totals: dict[str, Decimal] = {}
+    portfolio_rows = TradeRepublicPortfolioSnapshot.objects.filter(
+        snapshot=snapshot,
+        account_snapshot__isnull=True,
+    )
+    for row in portfolio_rows:
+        totals[row.portfolio_type] = (totals.get(row.portfolio_type, Decimal("0")) + row.current_value)
+    return totals
+
+
+def _bridge_portfolio_breakdown(snapshot: TradeRepublicValuationSnapshot) -> list[dict]:
+    """Retourne le détail par type de portefeuille (valuation + investi + plus-value)."""
+    aggregated: dict[str, dict] = {}
+    portfolio_rows = TradeRepublicPortfolioSnapshot.objects.filter(
+        snapshot=snapshot,
+        account_snapshot__isnull=True,
+        current_value__gt=0,
+    )
+    for row in portfolio_rows:
+        pt = row.portfolio_type
+        if pt not in aggregated:
+            aggregated[pt] = {"valuation": Decimal("0"), "invested": Decimal("0")}
+        aggregated[pt]["valuation"] += row.current_value or Decimal("0")
+        aggregated[pt]["invested"] += row.invested_total or Decimal("0")
+
+    result = []
+    type_order = ["CTO", "PEA", "PEA-PME", "CRYPTO"]
+    for pt in type_order:
+        if pt not in aggregated:
+            continue
+        val = aggregated[pt]["valuation"]
+        inv = aggregated[pt]["invested"]
+        gain = val - inv
+        gain_pct = float(gain / inv * 100) if inv > 0 else 0
+        result.append({
+            "type": pt,
+            "valuation": float(val),
+            "invested": float(inv),
+            "gain": float(gain),
+            "gain_pct": gain_pct,
+        })
+    # Types non prévus (ordre alphabétique en fin)
+    for pt, data in sorted(aggregated.items()):
+        if pt not in type_order:
+            val, inv = data["valuation"], data["invested"]
+            gain = val - inv
+            gain_pct = float(gain / inv * 100) if inv > 0 else 0
+            result.append({"type": pt, "valuation": float(val), "invested": float(inv),
+                            "gain": float(gain), "gain_pct": gain_pct})
+    return result
+
+
+def _compute_traderepublic_positions_valuation(account: Account, valuation_end: datetime) -> dict | None:
+    """
+    Calcule une valorisation "logique" en agrégeant les positions nettes par ISIN
+    depuis les transactions enrichies (prix/quantité) importées de Trade Republic.
+    """
+    candidate_txs = (
+        Transaction.objects.filter(
+            account=account,
+            posted_at__lte=valuation_end,
+        )
+        .exclude(amount=Decimal("0"))
+        .order_by("posted_at", "id")
+    )
+
+    positions: dict[str, dict] = {}
+    latest_price_ts = None
+    has_enriched_data = False
+
+    for tx in candidate_txs:
+        raw = tx.raw if isinstance(tx.raw, dict) else {}
+        isin = raw.get("isin")
+        quantity = _safe_decimal(raw.get("investment_quantity"))
+        price = _safe_decimal(raw.get("current_price"))
+        invested_total = _safe_decimal(raw.get("investment_total")) or abs(tx.amount)
+
+        if not isin or quantity is None or price is None:
+            continue
+
+        has_enriched_data = True
+        sign = Decimal("1") if tx.amount > 0 else Decimal("-1")
+        signed_quantity = quantity * sign
+        signed_invested = invested_total * sign
+
+        if isin not in positions:
+            positions[isin] = {
+                "quantity": Decimal("0"),
+                "invested": Decimal("0"),
+                "latest_price": price,
+                "latest_price_at": tx.posted_at,
+            }
+
+        positions[isin]["quantity"] += signed_quantity
+        positions[isin]["invested"] += signed_invested
+
+        if tx.posted_at >= positions[isin]["latest_price_at"]:
+            positions[isin]["latest_price"] = price
+            positions[isin]["latest_price_at"] = tx.posted_at
+            if latest_price_ts is None or tx.posted_at > latest_price_ts:
+                latest_price_ts = tx.posted_at
+
+    if not has_enriched_data:
+        return None
+
+    total_valuation = Decimal("0")
+    total_invested = Decimal("0")
+    for data in positions.values():
+        net_qty = data["quantity"]
+        if net_qty <= 0:
+            continue
+        total_valuation += net_qty * data["latest_price"]
+        if data["invested"] > 0:
+            total_invested += data["invested"]
+
+    if total_valuation <= 0:
+        return None
+
+    latest_sync_snapshot = (
+        Transaction.objects.filter(
+            account=account,
+            posted_at__lte=valuation_end,
+            amount=Decimal("0"),
+            raw__is_sync_valuation_snapshot=True,
+        )
+        .order_by("-posted_at", "-id")
+        .first()
+    )
+    as_of = latest_sync_snapshot.posted_at if latest_sync_snapshot else (latest_price_ts or valuation_end)
+
+    return {
+        "valuation": total_valuation,
+        "invested": total_invested,
+        "as_of": as_of,
+    }
 
 
 def month_range(target: date) -> tuple[datetime, datetime]:
@@ -208,6 +381,52 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     global_latest_valuation_date = None  # Date de valorisation la plus récente parmi tous les comptes
     
     for account in investment_accounts:
+        bridge_snapshot = None
+        if account.provider == "traderepublic" and settings.TR_BRIDGE_ENABLED and not settings.TR_BRIDGE_SHADOW_MODE:
+            # Pour le bridge, utiliser max(end, now) afin d'inclure les syncs d'aujourd'hui
+            # même quand la période affichée se termine hier (ex: "24 mars → 24 avril").
+            bridge_cutoff = max(end, timezone.now())
+            bridge_snapshot = _get_latest_bridge_snapshot(account, bridge_cutoff)
+        if bridge_snapshot:
+            account_total_valuation = float(bridge_snapshot.total_with_cash or bridge_snapshot.positions_total)
+            invested_sum = bridge_snapshot.invested_total
+            latest_valuation_date = bridge_snapshot.source_timestamp
+            current_valuation += account_total_valuation
+            total_invested += float(invested_sum)
+            if global_latest_valuation_date is None or latest_valuation_date > global_latest_valuation_date:
+                global_latest_valuation_date = latest_valuation_date
+            investment_accounts_list_detailed.append(
+                {
+                    "name": account.name,
+                    "provider": account.provider or "generic",
+                    "balance": account_total_valuation,
+                    "invested": float(invested_sum),
+                    "bridge_snapshot": bridge_snapshot,
+                }
+            )
+            continue
+
+        tr_positions = None
+        if account.provider == "traderepublic":
+            tr_positions = _compute_traderepublic_positions_valuation(account, end)
+        if tr_positions:
+            account_total_valuation = float(tr_positions["valuation"])
+            invested_sum = tr_positions["invested"]
+            latest_valuation_date = tr_positions["as_of"]
+            current_valuation += account_total_valuation
+            total_invested += float(invested_sum)
+            if global_latest_valuation_date is None or latest_valuation_date > global_latest_valuation_date:
+                global_latest_valuation_date = latest_valuation_date
+            investment_accounts_list_detailed.append(
+                {
+                    "name": account.name,
+                    "provider": account.provider or "generic",
+                    "balance": account_total_valuation,
+                    "invested": float(invested_sum),
+                }
+            )
+            continue
+
         # Pour chaque compte, on agrège les valorisations par type de portefeuille
         # On cherche la dernière valorisation de CHAQUE type (PEA, CTO, CRYPTO) avant la date sélectionnée
         portfolio_types = ["PEA", "CTO", "CRYPTO", "PEA-PME"]
@@ -621,6 +840,12 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "checking_accounts_list": checking_accounts_list,
         "savings_accounts_list": savings_accounts_list,
         "investment_accounts_list_detailed": investment_accounts_list_detailed,
+        "bridge_portfolio_breakdown": next(
+            (_bridge_portfolio_breakdown(acc["bridge_snapshot"])
+             for acc in investment_accounts_list_detailed
+             if acc.get("bridge_snapshot")),
+            []
+        ),
         "transaction_count": transaction_count,
         "income_count": income_count,
         "expense_count": expense_count,
@@ -1140,50 +1365,58 @@ def account_detail(request: HttpRequest, account_id: int) -> HttpResponse:
     total_value = Decimal("0")
     # Dictionnaire pour stocker les détails des titres par portefeuille depuis les snapshots
     portfolio_holdings = defaultdict(list)
-    
-    for portfolio_type in portfolio_types:
-        # Trouver la transaction de valorisation la plus récente pour ce type avant la date
-        latest_valuation_tx = Transaction.objects.filter(
-            account=account,
-            posted_at__lte=valuation_dt,
-            account_balance__isnull=False,
-            raw__portfolio_type=portfolio_type
-        ).order_by("-posted_at", "-id").first()
-        
-        if latest_valuation_tx and latest_valuation_tx.account_balance is not None:
-            portfolio_totals[portfolio_type] = latest_valuation_tx.account_balance
-            total_value += latest_valuation_tx.account_balance
-            # Garder la date de valorisation la plus récente
-            if latest_valuation_date is None or latest_valuation_tx.posted_at > latest_valuation_date:
-                latest_valuation_date = latest_valuation_tx.posted_at
+
+    if account.provider == "traderepublic" and settings.TR_BRIDGE_ENABLED and not settings.TR_BRIDGE_SHADOW_MODE:
+        bridge_snapshot = _get_latest_bridge_snapshot(account, valuation_dt)
+        if bridge_snapshot:
+            portfolio_totals = _bridge_portfolio_totals(bridge_snapshot)
+            total_value = sum(portfolio_totals.values(), Decimal("0"))
+            latest_valuation_date = bridge_snapshot.source_timestamp
+
+    if total_value == 0:
+        for portfolio_type in portfolio_types:
+            # Trouver la transaction de valorisation la plus récente pour ce type avant la date
+            latest_valuation_tx = Transaction.objects.filter(
+                account=account,
+                posted_at__lte=valuation_dt,
+                account_balance__isnull=False,
+                raw__portfolio_type=portfolio_type
+            ).order_by("-posted_at", "-id").first()
             
-            # Extraire les détails des titres depuis le snapshot
-            raw_data = latest_valuation_tx.raw or {}
-            if isinstance(raw_data, dict) and "data" in raw_data:
-                pf_data = raw_data["data"]
-                # Format multi-portefeuilles : raw.data est un portefeuille avec type, valorisation, titres
-                if isinstance(pf_data, dict) and pf_data.get("type") == portfolio_type:
-                    # Extraire les titres de ce portefeuille
-                    for titre in pf_data.get("titres", []):
-                        portfolio_holdings[portfolio_type].append({
-                            "symbol": titre.get("symbole", ""),
-                            "name": titre.get("nom", ""),
-                            "instrument_type": titre.get("type", "stock"),
-                            "quantity": Decimal(str(titre.get("quantite", 0))),
-                            "unit_price": Decimal(str(titre.get("prix_unitaire", 0))),
-                            "total_value": Decimal(str(titre.get("valeur_totale", 0))),
-                        })
-                # Format single portefeuille : raw.data contient directement les titres (liste)
-                elif isinstance(pf_data, list):
-                    for titre in pf_data:
-                        portfolio_holdings[portfolio_type].append({
-                            "symbol": titre.get("symbole", ""),
-                            "name": titre.get("nom", ""),
-                            "instrument_type": titre.get("type", "stock"),
-                            "quantity": Decimal(str(titre.get("quantite", 0))),
-                            "unit_price": Decimal(str(titre.get("prix_unitaire", 0))),
-                            "total_value": Decimal(str(titre.get("valeur_totale", 0))),
-                        })
+            if latest_valuation_tx and latest_valuation_tx.account_balance is not None:
+                portfolio_totals[portfolio_type] = latest_valuation_tx.account_balance
+                total_value += latest_valuation_tx.account_balance
+                # Garder la date de valorisation la plus récente
+                if latest_valuation_date is None or latest_valuation_tx.posted_at > latest_valuation_date:
+                    latest_valuation_date = latest_valuation_tx.posted_at
+                
+                # Extraire les détails des titres depuis le snapshot
+                raw_data = latest_valuation_tx.raw or {}
+                if isinstance(raw_data, dict) and "data" in raw_data:
+                    pf_data = raw_data["data"]
+                    # Format multi-portefeuilles : raw.data est un portefeuille avec type, valorisation, titres
+                    if isinstance(pf_data, dict) and pf_data.get("type") == portfolio_type:
+                        # Extraire les titres de ce portefeuille
+                        for titre in pf_data.get("titres", []):
+                            portfolio_holdings[portfolio_type].append({
+                                "symbol": titre.get("symbole", ""),
+                                "name": titre.get("nom", ""),
+                                "instrument_type": titre.get("type", "stock"),
+                                "quantity": Decimal(str(titre.get("quantite", 0))),
+                                "unit_price": Decimal(str(titre.get("prix_unitaire", 0))),
+                                "total_value": Decimal(str(titre.get("valeur_totale", 0))),
+                            })
+                    # Format single portefeuille : raw.data contient directement les titres (liste)
+                    elif isinstance(pf_data, list):
+                        for titre in pf_data:
+                            portfolio_holdings[portfolio_type].append({
+                                "symbol": titre.get("symbole", ""),
+                                "name": titre.get("nom", ""),
+                                "instrument_type": titre.get("type", "stock"),
+                                "quantity": Decimal(str(titre.get("quantite", 0))),
+                                "unit_price": Decimal(str(titre.get("prix_unitaire", 0))),
+                                "total_value": Decimal(str(titre.get("valeur_totale", 0))),
+                            })
     
     # Si aucune valorisation trouvée, utiliser les holdings actuels comme fallback
     if total_value == 0:
@@ -1327,6 +1560,43 @@ def traderepublic_import(request: HttpRequest) -> HttpResponse:
     return render(request, "finance/traderepublic_import.html")
 
 
+def _resolve_tr_credentials_for_user_account(user, account_id: int | None) -> tuple[str, str] | None:
+    if not account_id:
+        return None
+    try:
+        account = Account.objects.select_related("bank_connection").get(
+            id=account_id,
+            owner=user,
+            provider="traderepublic",
+        )
+    except Account.DoesNotExist:
+        return None
+
+    connection = account.bank_connection
+    if not connection or not connection.encrypted_credentials:
+        return None
+    try:
+        credentials = EncryptionService.decrypt_credentials(connection.encrypted_credentials)
+    except EncryptionError:
+        return None
+
+    phone = (credentials.get("phone_number") or credentials.get("username") or "").strip()
+    pin = (credentials.get("pin") or credentials.get("password") or "").strip()
+    if phone and pin:
+        return phone, pin
+    return None
+
+
+def _extract_retry_after_seconds(error_text: str) -> int | None:
+    match = re.search(r"nextAttemptInSeconds['\"]?\s*:\s*(\d+)", error_text or "")
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except (TypeError, ValueError):
+        return None
+
+
 @login_required
 def traderepublic_initiate_login(request: HttpRequest) -> JsonResponse:
     """Initie la connexion Trade Republic et retourne le process_id."""
@@ -1346,14 +1616,45 @@ def traderepublic_initiate_login(request: HttpRequest) -> JsonResponse:
         logger.info("TR initiate request json=%s", safe_data)
         phone_number = data.get("phone_number")
         pin = data.get("pin")
+        account_id = data.get("account_id")
         account_name = data.get("account_name", "Trade Republic")
         currency = data.get("currency", "EUR")
-        
+
+        if (not phone_number or not pin) and account_id:
+            resolved = _resolve_tr_credentials_for_user_account(request.user, int(account_id))
+            if resolved:
+                phone_number, pin = resolved
+
         if not phone_number or not pin:
             return JsonResponse({"error": "Numéro de téléphone et PIN requis"}, status=400)
         
         scraper = TradeRepublicScraper(phone_number, pin)
-        login_info = scraper.initiate_login()
+        try:
+            login_info = scraper.initiate_login()
+        except ValueError as exc:
+            error_text = str(exc)
+            if "TOO_MANY_REQUESTS" in error_text or "429" in error_text:
+                retry_after_seconds = _extract_retry_after_seconds(error_text)
+                existing_process_id = request.session.get("traderepublic_process_id")
+                existing_scraper = request.session.get("traderepublic_scraper")
+                if existing_process_id and existing_scraper:
+                    return JsonResponse(
+                        {
+                            "success": True,
+                            "process_id": existing_process_id,
+                            "countdown": retry_after_seconds or 0,
+                            "reused_pending_2fa": True,
+                            "message": "Challenge 2FA déjà en cours.",
+                        }
+                    )
+                return JsonResponse(
+                    {
+                        "error": "Trade Republic limite temporairement les demandes de code 2FA.",
+                        "retry_after_seconds": retry_after_seconds,
+                    },
+                    status=429,
+                )
+            raise
         
         # Stocker les informations dans la session (numéro normalisé E.164 pour les étapes suivantes)
         request.session["traderepublic_phone"] = scraper.phone_number
@@ -1409,6 +1710,46 @@ def traderepublic_resend_2fa(request: HttpRequest) -> JsonResponse:
 
 
 @login_required
+def traderepublic_verify_for_bridge(request: HttpRequest) -> JsonResponse:
+    """Vérifie le code 2FA pour le bridge, sans lancer d'import CSV."""
+    if request.method != "POST":
+        return JsonResponse({"error": "Méthode non autorisée"}, status=405)
+
+    try:
+        data = json.loads(request.body)
+        code = (data.get("code") or "").strip()
+        if not code:
+            return JsonResponse({"error": "Code 2FA requis"}, status=400)
+
+        scraper_info = request.session.get("traderepublic_scraper")
+        process_id = request.session.get("traderepublic_process_id")
+        if not scraper_info or not process_id:
+            return JsonResponse({"error": "Session 2FA expirée. Relancez la synchronisation."}, status=400)
+
+        scraper = TradeRepublicScraper(
+            scraper_info["phone_number"],
+            scraper_info["pin"],
+            api_cookies=request.session.get("traderepublic_api_cookies"),
+            waf_token=request.session.get("traderepublic_waf_token") or "",
+            device_info=request.session.get("traderepublic_device_info") or "",
+        )
+        scraper.process_id = process_id
+        scraper.verify_2fa(code)
+        request.session["traderepublic_api_cookies"] = scraper.export_api_cookies_for_session()
+        request.session["traderepublic_waf_token"] = getattr(scraper, "_waf_token", "") or ""
+        request.session["traderepublic_device_info"] = getattr(scraper, "_device_info", "") or ""
+        request.session.pop("traderepublic_process_id", None)
+
+        return JsonResponse({"success": True, "message": "Code 2FA validé. Relance de sync possible."})
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Données JSON invalides"}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@login_required
 def traderepublic_verify_and_scrape(request: HttpRequest) -> JsonResponse:
     """Vérifie le code 2FA et lance le scraping."""
     if request.method != "POST":
@@ -1417,7 +1758,11 @@ def traderepublic_verify_and_scrape(request: HttpRequest) -> JsonResponse:
     try:
         data = json.loads(request.body)
         code = data.get("code", "").strip()
-        extract_details = data.get("extract_details", False)
+        extract_details = True
+        logger = logging.getLogger(__name__)
+        logger.info(
+            "TR verify: force extract_details=True for richer valuation fields"
+        )
         
         if not code:
             return JsonResponse({"error": "Code 2FA requis"}, status=400)
@@ -1516,8 +1861,6 @@ def traderepublic_verify_and_scrape(request: HttpRequest) -> JsonResponse:
                             account.save(update_fields=["initial_balance", "balance_snapshot_date"])
             except Exception as cash_error:
                 # Ne pas bloquer l'import si la récupération des liquidités échoue
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f"Erreur lors de la récupération des liquidités Trade Republic: {cash_error}")
             
             # Récupérer le portefeuille (CTO/PEA) et stocker le montant total
@@ -1578,8 +1921,6 @@ def traderepublic_verify_and_scrape(request: HttpRequest) -> JsonResponse:
                             pass
             except Exception as portfolio_error:
                 # Ne pas bloquer l'import si la récupération du portefeuille échoue
-                import logging
-                logger = logging.getLogger(__name__)
                 logger.warning(f"Erreur lors de la récupération du portefeuille Trade Republic: {portfolio_error}")
             
             # Nettoyer la session
@@ -1621,7 +1962,7 @@ def update_investment_valuation(request: HttpRequest) -> HttpResponse:
         valuation = data.get("valuation")
         valuation_date = data.get("date")
         
-        if not account_id or valuation is None or not valuation_date:
+        if not account_id:
             return JsonResponse({"error": "Paramètres manquants"}, status=400)
         
         # Récupérer le compte
@@ -1631,29 +1972,66 @@ def update_investment_valuation(request: HttpRequest) -> HttpResponse:
         if account.provider != "traderepublic" and account.type != Account.AccountType.BROKER:
             return JsonResponse({"error": "Ce compte n'est pas un compte d'investissement"}, status=400)
         
+        if settings.TR_BRIDGE_ENABLED and account.provider == "traderepublic":
+            logger = logging.getLogger(__name__)
+            logger.info("tr_bridge_sync_requested source=update_investment_valuation account_id=%s", account.id)
+            snapshot = sync_bridge_snapshot_with_auth_handling(account=account)
+            if (
+                snapshot.auth_status
+                == TradeRepublicValuationSnapshot.AuthStatus.NEEDS_MANUAL_AUTH
+            ):
+                logger.warning("tr_bridge_sync_auth_required source=update_investment_valuation account_id=%s", account.id)
+                auth_status = get_bridge_auth_status_safe()
+                return JsonResponse(
+                    {
+                        "error": "Authentification Trade Republic requise",
+                        "auth_status": auth_status,
+                    },
+                    status=409,
+                )
+            return JsonResponse(
+                {
+                    "success": True,
+                    "message": "Valorisation synchronisée depuis le bridge",
+                    "snapshot_id": snapshot.id,
+                    "value": float(snapshot.total_with_cash),
+                    "date": snapshot.source_timestamp.isoformat(),
+                }
+            )
+
+        if valuation is None or not valuation_date:
+            return JsonResponse({"error": "Paramètres manquants"}, status=400)
+
         # Parser la date
         from datetime import datetime
+
         valuation_datetime = datetime.strptime(valuation_date, "%Y-%m-%d")
         if settings.USE_TZ:
-            valuation_datetime = timezone.make_aware(valuation_datetime, timezone.get_current_timezone())
-        
+            valuation_datetime = timezone.make_aware(
+                valuation_datetime, timezone.get_current_timezone()
+            )
+
         # Créer une transaction "snapshot" avec amount=0 et account_balance=valuation
         from decimal import Decimal
+
         Transaction.objects.create(
             account=account,
             posted_at=valuation_datetime,
             amount=Decimal("0"),
             description=f"Valorisation manuelle - {valuation} €",
             account_balance=Decimal(str(valuation)),
-            raw={"source": "manual_valuation", "type": "snapshot"}
+            raw={"source": "manual_valuation", "type": "snapshot"},
         )
-        
+
         # Mettre à jour initial_balance si c'est la valorisation la plus récente
         account.initial_balance = Decimal(str(valuation))
         account.balance_snapshot_date = valuation_datetime.date()
         account.save(update_fields=["initial_balance", "balance_snapshot_date"])
-        
-        messages.success(request, f"Valorisation de {account.name} mise à jour : {valuation} € au {valuation_date}")
+
+        messages.success(
+            request,
+            f"Valorisation de {account.name} mise à jour : {valuation} € au {valuation_date}",
+        )
         return JsonResponse({"success": True, "message": "Valorisation mise à jour avec succès"})
         
     except Account.DoesNotExist:
@@ -2266,14 +2644,37 @@ def bank_connection_sync(request: HttpRequest, connection_id: int) -> HttpRespon
         messages.error(request, "Aucun compte associé à cette connexion.")
         return redirect("bank_connections_list")
 
-    # Appeler la tâche Celery de manière asynchrone
-    from finance.tasks import sync_bank_account
+    if (
+        settings.TR_BRIDGE_ENABLED
+        and connection.provider == BankConnection.Provider.TRADE_REPUBLIC
+        and account.type == Account.AccountType.BROKER
+    ):
+        try:
+            snapshot = sync_bridge_snapshot_with_auth_handling(account=account)
+            if (
+                snapshot.auth_status
+                == TradeRepublicValuationSnapshot.AuthStatus.NEEDS_MANUAL_AUTH
+            ):
+                messages.warning(
+                    request,
+                    "Authentification Trade Republic requise avant de synchroniser la valorisation bridge.",
+                )
+            else:
+                messages.success(
+                    request,
+                    f"Snapshot bridge créé pour '{account.name}' ({snapshot.source_timestamp.strftime('%d/%m/%Y %H:%M')}).",
+                )
+        except TradeRepublicBridgeError as e:
+            messages.error(request, f"Erreur bridge lors de la synchronisation : {str(e)}")
+    else:
+        # Appeler la tâche Celery de manière asynchrone
+        from finance.tasks import sync_bank_account
 
-    try:
-        task_result = sync_bank_account.delay(account.id, sync_type=SyncLog.SyncType.MANUAL)
-        messages.success(request, f"Synchronisation du compte '{account.name}' démarrée.")
-    except Exception as e:
-        messages.error(request, f"Erreur lors du démarrage de la synchronisation : {str(e)}")
+        try:
+            task_result = sync_bank_account.delay(account.id, sync_type=SyncLog.SyncType.MANUAL)
+            messages.success(request, f"Synchronisation du compte '{account.name}' démarrée.")
+        except Exception as e:
+            messages.error(request, f"Erreur lors du démarrage de la synchronisation : {str(e)}")
 
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return JsonResponse({"success": True, "message": "Synchronisation démarrée."})
@@ -2372,6 +2773,119 @@ def account_sync_api(request: HttpRequest, account_id: int) -> JsonResponse:
         return JsonResponse(
             {"success": False, "error": "Ce compte n'a pas de connexion bancaire."}, status=400
         )
+
+    if (
+        settings.TR_BRIDGE_ENABLED
+        and account.provider == "traderepublic"
+        and account.type == Account.AccountType.BROKER
+    ):
+        bank_connection = account.bank_connection
+        sync_log = SyncLog.objects.create(
+            bank_connection=bank_connection,
+            sync_type=SyncLog.SyncType.MANUAL,
+            status=SyncLog.Status.STARTED,
+        )
+        bank_connection.sync_status = BankConnection.SyncStatus.SYNCING
+        bank_connection.save(update_fields=["sync_status", "updated_at"])
+        try:
+            payload = {}
+            if request.body:
+                try:
+                    payload = json.loads(request.body)
+                except json.JSONDecodeError:
+                    payload = {}
+            device_pin = (payload.get("two_fa_code") or "").strip() or None
+            logger = logging.getLogger(__name__)
+            logger.info(
+                "tr_bridge_sync_payload source=account_sync_api account_id=%s has_two_fa=%s two_fa_len=%s",
+                account.id,
+                bool(device_pin),
+                len(device_pin) if device_pin else 0,
+            )
+            logger.info("tr_bridge_sync_requested source=account_sync_api account_id=%s", account.id)
+            snapshot = sync_bridge_snapshot_with_auth_handling(account=account, device_pin=device_pin)
+            if (
+                snapshot.auth_status
+                == TradeRepublicValuationSnapshot.AuthStatus.NEEDS_MANUAL_AUTH
+            ):
+                logger.warning("tr_bridge_sync_auth_required source=account_sync_api account_id=%s", account.id)
+                sync_log.status = SyncLog.Status.ERROR
+                sync_log.error_message = "Authentification Trade Republic requise (2FA)"
+                sync_log.transactions_count = 0
+                sync_log.completed_at = timezone.now()
+                sync_log.save(
+                    update_fields=["status", "error_message", "transactions_count", "completed_at"]
+                )
+                bank_connection.sync_status = BankConnection.SyncStatus.ERROR
+                bank_connection.save(update_fields=["sync_status", "updated_at"])
+                return JsonResponse(
+                    {
+                        "success": False,
+                        "auth_required": True,
+                        "error": "Authentification Trade Republic requise",
+                        "auth_status": get_bridge_auth_status_safe(),
+                    },
+                    status=409,
+                )
+            bridge_tx_count = 0
+            if isinstance(snapshot.raw, dict):
+                try:
+                    bridge_tx_count = int(snapshot.raw.get("total_items") or 0)
+                except (TypeError, ValueError):
+                    bridge_tx_count = 0
+
+            sync_log.status = SyncLog.Status.SUCCESS
+            sync_log.error_message = ""
+            sync_log.transactions_count = bridge_tx_count
+            sync_log.completed_at = timezone.now()
+            sync_log.save(
+                update_fields=["status", "error_message", "transactions_count", "completed_at"]
+            )
+            bank_connection.sync_status = BankConnection.SyncStatus.SUCCESS
+            bank_connection.last_sync_at = timezone.now()
+            bank_connection.save(update_fields=["sync_status", "last_sync_at", "updated_at"])
+            return JsonResponse(
+                {
+                    "success": True,
+                    "message": "Synchronisation Trade Republic bridge terminée.",
+                    "snapshot_id": snapshot.id,
+                    "snapshot_date": snapshot.source_timestamp.isoformat(),
+                }
+            )
+        except TradeRepublicBridgeError as exc:
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                "tr_bridge_sync_failed source=account_sync_api account_id=%s error=%s",
+                account.id,
+                exc,
+            )
+            sync_log.status = SyncLog.Status.ERROR
+            sync_log.error_message = f"Bridge Trade Republic indisponible: {exc}"
+            sync_log.transactions_count = 0
+            sync_log.completed_at = timezone.now()
+            sync_log.save(
+                update_fields=["status", "error_message", "transactions_count", "completed_at"]
+            )
+            bank_connection.sync_status = BankConnection.SyncStatus.ERROR
+            bank_connection.save(update_fields=["sync_status", "updated_at"])
+            return JsonResponse(
+                {
+                    "success": False,
+                    "error": f"Bridge Trade Republic indisponible: {exc}",
+                },
+                status=400,
+            )
+        except Exception as exc:
+            sync_log.status = SyncLog.Status.ERROR
+            sync_log.error_message = f"Erreur inattendue sync bridge: {exc}"
+            sync_log.transactions_count = 0
+            sync_log.completed_at = timezone.now()
+            sync_log.save(
+                update_fields=["status", "error_message", "transactions_count", "completed_at"]
+            )
+            bank_connection.sync_status = BankConnection.SyncStatus.ERROR
+            bank_connection.save(update_fields=["sync_status", "updated_at"])
+            raise
 
     from finance.tasks import sync_bank_account
 

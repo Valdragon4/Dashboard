@@ -356,3 +356,57 @@ class TestTradeRepublicConnector(TestCase):
         formatted = self.connector._format_transaction(transaction)
 
         self.assertIsNone(formatted)
+
+    def test_format_transaction_investment_event_enriches_valuation(self):
+        """Test enrichissement valorisation sur eventType investissable."""
+        self.connector._price_service = Mock()
+        self.connector._price_service.get_price_for_isin.return_value = {
+            "price": Decimal("120.50"),
+            "source": "yfinance",
+            "symbol": "IE000BI8OT95",
+            "priced_at": "2026-04-26T16:00:00+00:00",
+        }
+        transaction = {
+            "id": "tx-invest-1",
+            "timestamp": "2025-01-01T10:00:00Z",
+            "title": "Core MSCI World USD (Acc)",
+            "amount": {"value": "-251.0"},
+            "eventType": "TRADE_INVOICE",
+            "icon": "logos/IE000BI8OT95/v2",
+            "Titres": "2,10084",
+            "Total": "251,00 €",
+        }
+
+        formatted = self.connector._format_transaction(transaction)
+
+        self.assertIsNotNone(formatted)
+        raw = formatted["raw"]
+        self.assertTrue(raw["is_investment_event"])
+        self.assertEqual(raw["isin"], "IE000BI8OT95")
+        self.assertEqual(raw["investment_quantity"], "2.10084")
+        self.assertEqual(raw["investment_total"], "251.00")
+        self.assertEqual(raw["current_price"], "120.50")
+        self.assertIn("current_value", raw)
+        self.assertIn("profit_loss", raw)
+        self.assertFalse(raw["pricing_unavailable"])
+
+    def test_format_transaction_non_investment_event_no_pricing(self):
+        """Test absence de pricing sur eventType non investissable."""
+        self.connector._price_service = Mock()
+        transaction = {
+            "id": "tx-cash-1",
+            "timestamp": "2025-01-01T10:00:00Z",
+            "title": "Versement",
+            "amount": {"value": "300.0"},
+            "eventType": "PAYMENT_INBOUND_CREDIT_CARD",
+            "icon": "logos/bank_visa/v2",
+            "Montant": "300,00 €",
+        }
+
+        formatted = self.connector._format_transaction(transaction)
+
+        self.assertIsNotNone(formatted)
+        raw = formatted["raw"]
+        self.assertFalse(raw["is_investment_event"])
+        self.assertNotIn("current_price", raw)
+        self.connector._price_service.get_price_for_isin.assert_not_called()

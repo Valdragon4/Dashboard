@@ -56,13 +56,13 @@
               </td>
               <td class="px-6 py-4 whitespace-nowrap">
                 {% if connection.sync_status == 'success' %}
-                  <span class="px-3 py-1 text-xs font-medium bg-green-100 text-green-800 rounded-full">✓ Succès</span>
+                  <span class="sync-status-badge px-3 py-1 text-xs font-medium bg-green-100 text-green-800 rounded-full">✓ Succès</span>
                 {% elif connection.sync_status == 'error' %}
-                  <span class="px-3 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-full">✗ Erreur</span>
+                  <span class="sync-status-badge px-3 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-full">✗ Erreur</span>
                 {% elif connection.sync_status == 'syncing' %}
-                  <span class="px-3 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full">⟳ En cours</span>
+                  <span class="sync-status-badge px-3 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full">⟳ En cours</span>
                 {% else %}
-                  <span class="px-3 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded-full">⏸ En attente</span>
+                  <span class="sync-status-badge px-3 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded-full">⏸ En attente</span>
                 {% endif %}
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
@@ -82,12 +82,19 @@
               </td>
               <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                 <div class="flex items-center justify-end gap-2">
-                  <form method="post" action="{% url 'bank_connection_sync' connection.id %}" class="inline">
-                    {% csrf_token %}
-                    <button type="submit" class="px-3 py-1 text-primary hover:text-primary-dark hover:bg-primary/10 rounded-lg transition-colors text-sm" title="Synchroniser maintenant">
+                  {% if connection.linked_account %}
+                    <button
+                      type="button"
+                      class="sync-button px-3 py-1 text-primary hover:text-primary-dark hover:bg-primary/10 rounded-lg transition-colors text-sm"
+                      title="Synchroniser maintenant"
+                      data-account-id="{{ connection.linked_account.id }}"
+                      data-connection-id="{{ connection.id }}"
+                    >
                       ⟳ Sync
                     </button>
-                  </form>
+                  {% else %}
+                    <span class="px-3 py-1 text-gray-400 text-sm" title="Aucun compte associé">⟳ Sync</span>
+                  {% endif %}
                   <a href="{% url 'bank_connection_update' connection.id %}" class="px-3 py-1 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors text-sm" title="Modifier">
                     ✎ Modifier
                   </a>
@@ -117,4 +124,81 @@
       </div>
     {% endif %}
   </div>
+  <script>
+    async function parseApiResponse(response) {
+      const rawText = await response.text();
+      let data = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        data = null;
+      }
+      return { status: response.status, ok: response.ok, data, rawText };
+    }
+
+    function getCookie(name) {
+      const value = `; ${document.cookie}`;
+      const parts = value.split(`; ${name}=`);
+      if (parts.length === 2) return parts.pop().split(';').shift();
+      return '';
+    }
+
+    async function runAccountSync(accountId, button) {
+      const csrftoken = getCookie('csrftoken');
+      const originalText = button.textContent;
+      const row = button.closest('tr');
+      const statusBadge = row ? row.querySelector('.sync-status-badge') : null;
+      button.disabled = true;
+      button.innerHTML = '<span class="animate-spin">⟳</span> Sync...';
+      if (statusBadge) {
+        statusBadge.className = 'sync-status-badge px-3 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full';
+        statusBadge.textContent = '⟳ En cours';
+      }
+      try {
+        const response = await fetch(`/api/accounts/${accountId}/sync/`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrftoken,
+          },
+        });
+        const parsed = await parseApiResponse(response);
+        const { status, ok, data, rawText } = parsed;
+
+        if (status === 409 && data && data.auth_required) {
+          const code = window.prompt('Code 2FA Trade Republic requis. Entre le code reçu par SMS :');
+          if (!code) throw new Error('Code 2FA manquant');
+
+          const retryResp = await fetch(`/api/accounts/${accountId}/sync/`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': csrftoken,
+            },
+            body: JSON.stringify({ two_fa_code: code }),
+          });
+          const retryParsed = await parseApiResponse(retryResp);
+          const retryData = retryParsed.data;
+          if (!retryResp.ok || !retryData.success) throw new Error(retryData.error || 'Sync impossible après 2FA');
+        } else if (!ok || !data || !data.success) {
+          throw new Error((data && data.error) || rawText || `Erreur HTTP ${status}`);
+        }
+
+        window.location.reload();
+      } catch (error) {
+        if (statusBadge) {
+          statusBadge.className = 'sync-status-badge px-3 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-full';
+          statusBadge.textContent = '✗ Erreur';
+        }
+        alert(`Erreur : ${error.message || 'Synchronisation impossible'}`);
+      } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    }
+
+    document.querySelectorAll('.sync-button[data-account-id]').forEach((button) => {
+      button.addEventListener('click', () => runAccountSync(button.dataset.accountId, button));
+    });
+  </script>
 {% endblock %}

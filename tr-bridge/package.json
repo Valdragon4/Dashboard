@@ -1,0 +1,12 @@
+{
+  "name": "tr-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun run index.ts"
+  },
+  "dependencies": {
+    "trapi": "NightOwl07/trade-republic-api"
+  }
+}

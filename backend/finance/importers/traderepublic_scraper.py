@@ -235,6 +235,48 @@ async def connect_to_websocket():
     return websocket
 
 
+def _extract_first_json_object(payload: str):
+    """Extrait le premier objet JSON décodable d'un message websocket brut."""
+    if not payload:
+        return {}
+    decoder = json.JSONDecoder()
+    for idx, ch in enumerate(payload):
+        if ch != "{":
+            continue
+        try:
+            obj, _ = decoder.raw_decode(payload[idx:])
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            continue
+    return {}
+
+
+def _extract_title_detail_pairs(data) -> dict:
+    """Parcourt récursivement une structure et extrait title -> detail.text."""
+    out = {}
+
+    def walk(node):
+        if isinstance(node, dict):
+            title = node.get("title")
+            detail = node.get("detail")
+            text = None
+            if isinstance(detail, dict):
+                text = detail.get("text")
+            elif isinstance(detail, str):
+                text = detail
+            if title and text and title not in out:
+                out[title] = text
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(data)
+    return out
+
+
 async def fetch_transaction_details(websocket, transaction_id, token, message_id):
     """Récupère les détails d'une transaction spécifique via WebSocket."""
     payload = {"type": "timelineDetailV2", "id": transaction_id, "token": token}
@@ -251,25 +293,18 @@ async def fetch_transaction_details(websocket, transaction_id, token, message_id
     except asyncio.TimeoutError:
         pass  # Ignorer le timeout sur la réponse unsub
 
-    start_index = response.find("{")
-    end_index = response.rfind("}")
-    try:
-        response_data = json.loads(
-            response[start_index : end_index + 1]
-            if start_index != -1 and end_index != -1
-            else "{}"
-        )
-    except json.JSONDecodeError:
+    response_data = _extract_first_json_object(response)
+    if not response_data:
+        logger.debug("TR detail parse empty transaction_id=%s", transaction_id)
         return {}, message_id
 
-    transaction_data = {}
-    for section in response_data.get("sections", []):
-        if section.get("title") == "Transaction":
-            for item in section.get("data", []):
-                header = item.get("title")
-                value = item.get("detail", {}).get("text")
-                if header and value:
-                    transaction_data[header] = value
+    transaction_data = _extract_title_detail_pairs(response_data)
+    if not transaction_data:
+        logger.debug(
+            "TR detail keys empty transaction_id=%s top_keys=%s",
+            transaction_id,
+            list(response_data.keys()),
+        )
 
     return transaction_data, message_id
 
@@ -305,17 +340,8 @@ async def fetch_all_transactions(token, extract_details=False):
             except asyncio.TimeoutError:
                 pass  # Ignorer le timeout sur la réponse unsub
             
-            start_index = response.find("{")
-            end_index = response.rfind("}")
-            response = (
-                response[start_index : end_index + 1]
-                if start_index != -1 and end_index != -1
-                else "{}"
-            )
-            
-            try:
-                data = json.loads(response)
-            except json.JSONDecodeError:
+            data = _extract_first_json_object(response)
+            if not data:
                 # Si le parsing JSON échoue, on arrête la boucle
                 break
 

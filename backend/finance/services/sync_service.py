@@ -94,7 +94,7 @@ class SyncService:
         elif provider == BankConnection.Provider.BOURSORAMA:
             if BoursoBankConnector is None:
                 raise ImportError(
-                    "Le connecteur BoursoBank nécessite boursobank-scraper."
+                    "Le connecteur BoursoBank nécessite boursobank-scraper (Python 3.13+)."
                 )
             return BoursoBankConnector()
         elif provider == BankConnection.Provider.HELLOBANK:

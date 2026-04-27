@@ -6,6 +6,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Iterable
+import re
 
 from django.conf import settings
 from django.utils import timezone
@@ -20,6 +21,11 @@ class TradeRepublicEntry:
     isin: str | None
     quantity: Decimal | None
     transaction_id: str | None  # ID unique de Trade Republic pour déduplication
+    event_type: str | None
+    icon: str | None
+    total_invested: Decimal | None
+    unit_price: Decimal | None
+    portfolio_type: str | None
 
 
 def _parse_date(value: str) -> datetime:
@@ -42,11 +48,42 @@ def _parse_decimal(value: str) -> Decimal | None:
     if not cleaned:
         return None
     cleaned = cleaned.replace("€", "").replace(" ", "")
+    # Gère les formats FR/UE avec séparateur de milliers '.'
+    # ex: +1.000,00 -> +1000.00
+    if "," in cleaned and "." in cleaned:
+        cleaned = cleaned.replace(".", "")
     cleaned = cleaned.replace(",", ".")
     try:
         return Decimal(cleaned)
     except InvalidOperation:
         raise ValueError(f"Impossible de parser le montant Trade Republic: {value}")
+
+
+_ISIN_IN_ICON_REGEX = re.compile(r"([A-Z]{2}[A-Z0-9]{9}\d)")
+
+
+def _extract_isin_from_icon(icon: str | None) -> str | None:
+    if not icon:
+        return None
+    match = _ISIN_IN_ICON_REGEX.search(icon)
+    return match.group(1) if match else None
+
+
+def _normalize_portfolio_type(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    mapping = {
+        "cto": "CTO",
+        "compte_titres": "CTO",
+        "compte_titres_ordinaire": "CTO",
+        "pea": "PEA",
+        "pea_pme": "PEA-PME",
+        "peapme": "PEA-PME",
+        "pme": "PEA-PME",
+        "crypto": "CRYPTO",
+    }
+    return mapping.get(normalized)
 
 
 def parse_traderepublic_csv(path: str | Path) -> Iterable[TradeRepublicEntry]:
@@ -123,8 +160,44 @@ def parse_traderepublic_csv(path: str | Path) -> Iterable[TradeRepublicEntry]:
             
             quantity = _parse_decimal(
                 get(row, "Quantity", "quantity", "Shares", "shares")
+                or get(row, "Titres")
                 or row_lower.get("quantity", "")
                 or row_lower.get("shares", "")
+                or row_lower.get("titres", "")
+            )
+            event_type = (
+                get(row, "eventType", "EventType")
+                or row_lower.get("eventtype", "")
+                or None
+            )
+            icon = (
+                get(row, "icon", "Icon")
+                or row_lower.get("icon", "")
+                or None
+            )
+            if not isin:
+                isin = _extract_isin_from_icon(icon)
+            total_invested = _parse_decimal(
+                get(row, "Total", "total")
+                or row_lower.get("total", "")
+            )
+            unit_price = _parse_decimal(
+                get(row, "Cours du titre", "cours du titre")
+                or row_lower.get("cours du titre", "")
+            )
+            portfolio_type = _normalize_portfolio_type(
+                get(
+                    row,
+                    "portfolio_type",
+                    "Portfolio Type",
+                    "portfolioType",
+                    "Portfolio",
+                    "Tax Wrapper",
+                )
+                or row_lower.get("portfolio_type", "")
+                or row_lower.get("portfoliotype", "")
+                or row_lower.get("portfolio", "")
+                or row_lower.get("tax_wrapper", "")
             )
             
             # Filtrer les transactions non-investissement : virements personnels, versements, intérêts
@@ -164,6 +237,11 @@ def parse_traderepublic_csv(path: str | Path) -> Iterable[TradeRepublicEntry]:
                 isin=isin,
                 quantity=quantity,
                 transaction_id=transaction_id,
+                event_type=event_type,
+                icon=icon,
+                total_invested=total_invested,
+                unit_price=unit_price,
+                portfolio_type=portfolio_type,
             )
 
 

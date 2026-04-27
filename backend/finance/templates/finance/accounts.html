@@ -135,6 +135,17 @@
   </div>
   
   <script>
+    async function parseApiResponse(response) {
+      const rawText = await response.text();
+      let data = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        data = null;
+      }
+      return { status: response.status, ok: response.ok, data, rawText };
+    }
+
     function toggleDashboard(accountId, checkbox) {
       // Récupérer le token CSRF
       const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
@@ -194,7 +205,37 @@
           'X-CSRFToken': csrftoken,
         },
       })
-      .then(response => response.json())
+      .then(parseApiResponse)
+      .then(async ({ status, ok, data, rawText }) => {
+        if (status === 409 && data && data.auth_required) {
+          const code = window.prompt('Code 2FA Trade Republic requis. Entre le code reçu par SMS :');
+          if (!code) {
+            throw new Error('Code 2FA manquant');
+          }
+
+          const retryResp = await fetch(`/api/accounts/${accountId}/sync/`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': csrftoken,
+            },
+            body: JSON.stringify({ two_fa_code: code }),
+          });
+          const retryParsed = await parseApiResponse(retryResp);
+          if (!retryParsed.ok) {
+            throw new Error(
+              (retryParsed.data && retryParsed.data.error) ||
+              retryParsed.rawText ||
+              `Erreur HTTP ${retryParsed.status}`
+            );
+          }
+          return retryParsed.data || { success: true };
+        }
+        if (!ok) {
+          throw new Error((data && data.error) || rawText || `Erreur HTTP ${status}`);
+        }
+        return data;
+      })
       .then(data => {
         if (data.success) {
           // Afficher notification de succès (utiliser les messages Django si disponibles)

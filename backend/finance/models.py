@@ -267,3 +267,118 @@ class BankAccountLink(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
 
+class TradeRepublicValuationSnapshot(models.Model):
+    class Source(models.TextChoices):
+        BRIDGE_AUTO = "bridge_auto", "Bridge automatique"
+        PDF_FALLBACK = "pdf_fallback", "Import PDF fallback"
+        MANUAL = "manual", "Manuel"
+        LEGACY = "legacy", "Legacy"
+
+    class AuthStatus(models.TextChoices):
+        AUTHENTICATED = "authenticated", "Authentifié"
+        NEEDS_MANUAL_AUTH = "needs_manual_auth", "Authentification manuelle requise"
+        FAILED = "failed", "Échec"
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="tr_valuation_snapshots",
+    )
+    account = models.ForeignKey(
+        Account,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="tr_valuation_snapshots",
+    )
+    source = models.CharField(max_length=32, choices=Source.choices, default=Source.BRIDGE_AUTO)
+    auth_status = models.CharField(
+        max_length=32, choices=AuthStatus.choices, default=AuthStatus.AUTHENTICATED
+    )
+    source_timestamp = models.DateTimeField()
+    currency = models.CharField(max_length=8, default="EUR")
+
+    invested_total = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    invested_societes = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    invested_crypto = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    invested_by_asset_type = models.JSONField(default=dict, blank=True)
+
+    societes = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    crypto = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    positions_total = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    cash = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    total_with_cash = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    bridge_latency_ms = models.IntegerField(null=True, blank=True)
+    raw = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["owner", "account", "-source_timestamp"]),
+            models.Index(fields=["source", "-source_timestamp"]),
+        ]
+        ordering = ["-source_timestamp", "-id"]
+
+
+class TradeRepublicAccountValuationSnapshot(models.Model):
+    snapshot = models.ForeignKey(
+        TradeRepublicValuationSnapshot,
+        on_delete=models.CASCADE,
+        related_name="account_snapshots",
+    )
+    external_account_id = models.CharField(max_length=64)
+    currency = models.CharField(max_length=8, default="EUR")
+
+    invested_total = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    invested_societes = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    invested_crypto = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    invested_by_asset_type = models.JSONField(default=dict, blank=True)
+
+    societes = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    crypto = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    positions_total = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    cash = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    total_with_cash = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+
+    raw = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["snapshot", "external_account_id"]),
+        ]
+
+
+class TradeRepublicPortfolioSnapshot(models.Model):
+    class PortfolioType(models.TextChoices):
+        CTO = "CTO", "CTO"
+        PEA = "PEA", "PEA"
+        CRYPTO = "CRYPTO", "CRYPTO"
+        PEA_PME = "PEA-PME", "PEA-PME"
+        OTHER = "OTHER", "Autre"
+
+    snapshot = models.ForeignKey(
+        TradeRepublicValuationSnapshot,
+        on_delete=models.CASCADE,
+        related_name="portfolio_snapshots",
+    )
+    account_snapshot = models.ForeignKey(
+        TradeRepublicAccountValuationSnapshot,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name="portfolio_snapshots",
+    )
+    portfolio_type = models.CharField(max_length=16, choices=PortfolioType.choices)
+    currency = models.CharField(max_length=8, default="EUR")
+    invested_total = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    current_value = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    raw = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["snapshot", "portfolio_type"]),
+            models.Index(fields=["portfolio_type", "-id"]),
+        ]
+
+

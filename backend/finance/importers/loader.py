@@ -2,13 +2,137 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
+import logging
 
 from django.db import transaction
 from django.db.models import Max
+from django.utils import timezone
 
 from finance.importers.statement_csv import StatementEntry, parse_statement_csv
 from finance.importers.traderepublic_csv import TradeRepublicEntry, parse_traderepublic_csv
 from finance.models import Account, Category, Transaction
+from finance.services.market_price_service import MarketPriceService
+
+logger = logging.getLogger(__name__)
+
+
+def _safe_decimal(value) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    try:
+        return Decimal(str(value))
+    except Exception:
+        return None
+
+
+def _normalize_portfolio_type(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.strip().upper().replace("_", "-")
+    if normalized in {"CTO", "PEA", "CRYPTO", "PEA-PME"}:
+        return normalized
+    return None
+
+
+def _build_isin_portfolio_type_map(account: Account) -> dict[str, str]:
+    """
+    Construit une table ISIN -> type de portefeuille à partir des snapshots existants
+    (notamment ceux importés depuis PDF) pour stabiliser la classification auto.
+    """
+    isin_map: dict[str, str] = {}
+    snapshot_txs = (
+        Transaction.objects.filter(account=account, amount=Decimal("0"))
+        .order_by("-posted_at", "-id")
+    )
+    for tx in snapshot_txs:
+        raw = tx.raw if isinstance(tx.raw, dict) else {}
+        snapshot_type = _normalize_portfolio_type(raw.get("portfolio_type"))
+        if not snapshot_type:
+            continue
+
+        data = raw.get("data")
+        titres = []
+        if isinstance(data, dict):
+            titres = data.get("titres", []) if isinstance(data.get("titres"), list) else []
+        elif isinstance(data, list):
+            titres = data
+
+        for titre in titres:
+            if not isinstance(titre, dict):
+                continue
+            isin = (titre.get("isin") or titre.get("symbole") or "").strip().upper()
+            if isin and isin not in isin_map:
+                isin_map[isin] = snapshot_type
+    return isin_map
+
+
+def _guess_portfolio_type_from_raw(raw: dict, tx: Transaction, isin_portfolio_type_map: dict[str, str] | None = None) -> str:
+    explicit = _normalize_portfolio_type(raw.get("portfolio_type"))
+    if explicit:
+        return explicit
+
+    event_type = (raw.get("eventType") or "").upper()
+    if event_type.startswith("PEA_"):
+        return "PEA"
+
+    isin = (raw.get("isin") or "").upper()
+    if isin and isin_portfolio_type_map and isin in isin_portfolio_type_map:
+        return isin_portfolio_type_map[isin]
+    text = f"{raw.get('instrument') or ''} {tx.description or ''}".lower()
+    crypto_keywords = ("btc", "eth", "crypto", "bitcoin", "ethereum", "solana", "xrp")
+    if isin.startswith("XF000") or any(keyword in text for keyword in crypto_keywords):
+        return "CRYPTO"
+
+    return "CTO"
+
+
+def _compute_tr_positions_valuation_for_snapshot(
+    account: Account,
+    isin_portfolio_type_map: dict[str, str] | None = None,
+) -> dict[str, Decimal]:
+    """
+    Calcule la valorisation nette du portefeuille Trade Republic
+    à partir des transactions enrichies (ISIN, quantité, prix).
+    """
+    positions_by_type: dict[str, dict[str, dict]] = {}
+    has_enriched_data = False
+    transactions = (
+        Transaction.objects.filter(account=account)
+        .exclude(amount=Decimal("0"))
+        .order_by("posted_at", "id")
+    )
+    for tx in transactions:
+        raw = tx.raw if isinstance(tx.raw, dict) else {}
+        isin = raw.get("isin")
+        quantity = _safe_decimal(raw.get("investment_quantity"))
+        price = _safe_decimal(raw.get("current_price"))
+        if not isin or quantity is None or price is None:
+            continue
+
+        has_enriched_data = True
+        sign = Decimal("1") if tx.amount > 0 else Decimal("-1")
+        signed_quantity = quantity * sign
+        portfolio_type = _guess_portfolio_type_from_raw(raw, tx, isin_portfolio_type_map)
+        type_positions = positions_by_type.setdefault(portfolio_type, {})
+        bucket = type_positions.setdefault(
+            isin,
+            {"quantity": Decimal("0"), "latest_price": price},
+        )
+        bucket["quantity"] += signed_quantity
+        bucket["latest_price"] = price
+
+    if not has_enriched_data:
+        return {}
+
+    totals: dict[str, Decimal] = {}
+    for portfolio_type, type_positions in positions_by_type.items():
+        total = Decimal("0")
+        for data in type_positions.values():
+            if data["quantity"] > 0:
+                total += data["quantity"] * data["latest_price"]
+        if total > 0:
+            totals[portfolio_type] = total
+    return totals
 
 
 @transaction.atomic
@@ -205,6 +329,8 @@ def import_traderepublic_from_csv(
     
     imported_count = 0
     skipped_count = 0
+    price_service = MarketPriceService()
+    isin_portfolio_type_map = _build_isin_portfolio_type_map(account)
 
     for entry in parse_traderepublic_csv(csv_path):
         if latest_posted_at and entry.posted_at <= latest_posted_at:
@@ -227,12 +353,44 @@ def import_traderepublic_from_csv(
             "source": "traderepublic",
             "instrument": entry.instrument,
             "isin": entry.isin,
+            "eventType": entry.event_type,
+            "icon": entry.icon,
         }
         if entry.quantity is not None:
             raw["quantity"] = str(entry.quantity)
+            raw["investment_quantity"] = str(entry.quantity)
+        if entry.unit_price is not None:
+            raw["unit_price_at_trade"] = str(entry.unit_price)
+        if entry.total_invested is not None:
+            raw["investment_total"] = str(entry.total_invested)
+        if entry.portfolio_type:
+            raw["portfolio_type"] = entry.portfolio_type
+        elif entry.isin and entry.isin.upper() in isin_portfolio_type_map:
+            raw["portfolio_type"] = isin_portfolio_type_map[entry.isin.upper()]
         # Ajouter l'ID unique Trade Republic pour déduplication
         if entry.transaction_id:
             raw["transaction_id"] = entry.transaction_id
+
+        _enrich_traderepublic_valuation(raw=raw, entry=entry, price_service=price_service)
+        if raw.get("is_investment_event"):
+            logger.info(
+                "TR valuation tx_id=%s event=%s isin=%s qty=%s invested=%s current_price=%s partial=%s unavailable=%s",
+                entry.transaction_id,
+                entry.event_type,
+                raw.get("isin"),
+                raw.get("investment_quantity"),
+                raw.get("investment_total"),
+                raw.get("current_price"),
+                raw.get("valuation_partial"),
+                raw.get("pricing_unavailable"),
+            )
+        else:
+            logger.info(
+                "TR non-investment tx_id=%s event=%s title=%s",
+                entry.transaction_id,
+                entry.event_type,
+                entry.description,
+            )
             
         _upsert_transaction(
             account,
@@ -253,8 +411,150 @@ def import_traderepublic_from_csv(
         skipped_count,
     )
     logger.info("=" * 100)
-    
+    snapshot_valuations = _compute_tr_positions_valuation_for_snapshot(
+        account,
+        isin_portfolio_type_map=isin_portfolio_type_map,
+    )
+    if snapshot_valuations:
+        sync_time = timezone.now()
+        for portfolio_type, snapshot_valuation in snapshot_valuations.items():
+            Transaction.objects.create(
+                account=account,
+                posted_at=sync_time,
+                amount=Decimal("0"),
+                description=f"Snapshot valorisation {portfolio_type} (sync auto)",
+                currency=account.currency or "EUR",
+                account_balance=snapshot_valuation,
+                raw={
+                    "source": "traderepublic_valuation_sync",
+                    "is_sync_valuation_snapshot": True,
+                    "valuation_method": "net_positions_by_isin",
+                    "valuation_total": str(snapshot_valuation),
+                    "portfolio_type": portfolio_type,
+                },
+            )
+            logger.info(
+                "📸 Snapshot %s TR enregistré à %s : %s",
+                portfolio_type,
+                sync_time.isoformat(),
+                snapshot_valuation,
+            )
+
     return imported_count
+
+
+def _enrich_traderepublic_valuation(
+    *,
+    raw: dict,
+    entry: TradeRepublicEntry,
+    price_service: MarketPriceService,
+) -> None:
+    investable_event_types = {
+        "TRADE_INVOICE",
+        "SAVINGS_PLAN_INVOICE_CREATED",
+        "TRADING_SAVINGSPLAN_EXECUTED",
+        "PEA_SAVINGS_PLAN_PAY_IN",
+        "TRADING_TRADE_EXECUTED",
+    }
+    has_investment_shape = bool(entry.isin and entry.quantity is not None)
+    raw["is_investment_event"] = (
+        entry.event_type in investable_event_types or has_investment_shape
+    )
+    if not raw["is_investment_event"]:
+        return
+
+    if not entry.isin:
+        raw["pricing_unavailable"] = True
+        logger.warning(
+            "TR valuation skipped: missing ISIN tx_id=%s event=%s description=%s",
+            entry.transaction_id,
+            entry.event_type,
+            entry.description,
+        )
+        return
+
+    invested_total = entry.total_invested
+    if invested_total is None:
+        invested_total = abs(entry.amount)
+    raw["investment_total"] = str(invested_total)
+
+    price_data = price_service.get_price_for_isin(entry.isin)
+    if (not price_data) and entry.unit_price is not None:
+        # Fallback non-live pour garantir un minimum de valorisation
+        # si la résolution Yahoo/API échoue pour un ISIN exotique.
+        price_data = {
+            "price": entry.unit_price,
+            "source": "transaction_unit_price_fallback",
+            "symbol": entry.isin,
+            "priced_at": None,
+        }
+        logger.warning(
+            "TR live price unavailable, fallback unit price used tx_id=%s isin=%s unit_price=%s",
+            entry.transaction_id,
+            entry.isin,
+            entry.unit_price,
+        )
+    if not price_data:
+        raw["pricing_unavailable"] = True
+        logger.error(
+            "TR valuation unavailable: no price source tx_id=%s isin=%s event=%s",
+            entry.transaction_id,
+            entry.isin,
+            entry.event_type,
+        )
+        return
+
+    current_price = price_data["price"]
+    raw["current_price"] = str(current_price)
+    raw["pricing_source"] = price_data.get("source")
+    raw["pricing_symbol"] = price_data.get("symbol")
+    raw["priced_at"] = price_data.get("priced_at")
+    raw["pricing_unavailable"] = False
+
+    effective_quantity = entry.quantity
+    if effective_quantity is None and entry.unit_price is not None and entry.unit_price > 0:
+        effective_quantity = invested_total / entry.unit_price
+        raw["investment_quantity"] = str(effective_quantity)
+        raw["quantity_inferred"] = True
+        logger.info(
+            "TR valuation inferred quantity from unit price tx_id=%s isin=%s qty=%s invested=%s unit_price=%s",
+            entry.transaction_id,
+            entry.isin,
+            effective_quantity,
+            invested_total,
+            entry.unit_price,
+        )
+    if effective_quantity is None and current_price > 0:
+        # Fallback d'estimation pour les événements où TR ne renvoie pas la quantité.
+        # On garde une trace explicite pour distinguer cette valeur d'une quantité source.
+        effective_quantity = invested_total / current_price
+        raw["investment_quantity"] = str(effective_quantity)
+        raw["quantity_estimated_from_live_price"] = True
+        logger.warning(
+            "TR valuation estimated quantity from live price tx_id=%s isin=%s qty=%s invested=%s current_price=%s",
+            entry.transaction_id,
+            entry.isin,
+            effective_quantity,
+            invested_total,
+            current_price,
+        )
+
+    if effective_quantity is not None:
+        current_value = effective_quantity * current_price
+        profit_loss = current_value - invested_total
+        raw["current_value"] = str(current_value)
+        raw["profit_loss"] = str(profit_loss)
+        raw.pop("valuation_partial", None)
+    else:
+        raw["current_value"] = None
+        raw["profit_loss"] = None
+        raw["valuation_partial"] = True
+        logger.warning(
+            "TR valuation partial: missing quantity tx_id=%s isin=%s event=%s",
+            entry.transaction_id,
+            entry.isin,
+            entry.event_type,
+        )
 
 
 def _upsert_transaction(

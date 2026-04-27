@@ -435,7 +435,7 @@ class TestImportTradeRepublicRegression(TestCase):
         self.assertGreaterEqual(count, 0)
         account = Account.objects.get(name="Test Account TR Investment", owner=self.user)
         if count > 0:
-            transaction = Transaction.objects.filter(account=account).first()
+            transaction = Transaction.objects.filter(account=account).exclude(amount=Decimal("0")).first()
             self.assertIsNotNone(transaction.raw)
             self.assertIn("instrument", transaction.raw or {})
 
@@ -459,6 +459,384 @@ class TestImportTradeRepublicRegression(TestCase):
         )
 
         self.assertGreaterEqual(count, 0)
+
+    @patch("finance.importers.loader.MarketPriceService")
+    def test_import_traderepublic_enriches_valuation_on_investment_events(self, mock_price_service_cls):
+        """Test enrichissement valorisation sur flux CSV Trade Republic 2FA."""
+        mock_price_service = Mock()
+        mock_price_service.get_price_for_isin.return_value = {
+            "price": Decimal("120.50"),
+            "source": "yfinance",
+            "symbol": "IE000BI8OT95",
+            "priced_at": "2026-04-26T18:00:00+00:00",
+        }
+        mock_price_service_cls.return_value = mock_price_service
+
+        csv_content = [
+            {
+                "timestamp": "04/11/2024",
+                "id": "tx_trade_1",
+                "title": "Core MSCI World USD (Acc)",
+                "icon": "logos/IE000BI8OT95/v2",
+                "eventType": "TRADE_INVOICE",
+                "amount.value": "-251.0",
+                "Titres": "2,10084",
+                "Total": "251,00 €",
+            },
+            {
+                "timestamp": "05/11/2024",
+                "id": "tx_payment_1",
+                "title": "Valentin Marot",
+                "icon": "logos/timeline_plus_circle/v2",
+                "eventType": "PAYMENT_INBOUND",
+                "amount.value": "1000.0",
+            },
+        ]
+        csv_path = self._create_csv_file(csv_content)
+
+        count = import_traderepublic_from_csv(
+            user=self.user,
+            csv_path=csv_path,
+            account_name="Test Account TR Valuation",
+            currency="EUR",
+        )
+
+        self.assertEqual(count, 1)
+        account = Account.objects.get(name="Test Account TR Valuation", owner=self.user)
+        transaction = Transaction.objects.exclude(amount=Decimal("0")).get(account=account)
+        snapshot = Transaction.objects.filter(account=account, amount=Decimal("0")).first()
+        raw = transaction.raw or {}
+        self.assertEqual(raw.get("eventType"), "TRADE_INVOICE")
+        self.assertTrue(raw.get("is_investment_event"))
+        self.assertEqual(raw.get("isin"), "IE000BI8OT95")
+        self.assertEqual(raw.get("investment_quantity"), "2.10084")
+        self.assertEqual(raw.get("investment_total"), "251.00")
+        self.assertEqual(raw.get("current_price"), "120.50")
+        self.assertEqual(raw.get("pricing_source"), "yfinance")
+        self.assertEqual(raw.get("pricing_unavailable"), False)
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(snapshot.raw.get("is_sync_valuation_snapshot"), True)
+
+    @patch("finance.importers.loader.MarketPriceService")
+    def test_import_traderepublic_handles_real_event_types_and_french_fields(self, mock_price_service_cls):
+        """Couvre les eventType réels TR et champs FR vus en prod."""
+        mock_price_service = Mock()
+        mock_price_service.get_price_for_isin.return_value = {
+            "price": Decimal("112.80"),
+            "source": "yfinance",
+            "symbol": "SOME.TICKER",
+            "priced_at": "2026-04-26T18:00:00+00:00",
+        }
+        mock_price_service_cls.return_value = mock_price_service
+
+        csv_content = [
+            {
+                "timestamp": "03/12/2024",
+                "id": "tx_real_1",
+                "title": "S&P 500 EUR (Acc)",
+                "icon": "logos/LU1681048804/v2",
+                "eventType": "TRADING_SAVINGSPLAN_EXECUTED",
+                "amount.value": "-51.0",
+                "Titres": "0,443321",
+                "Cours du titre": "112,79 €",
+                "Total": "51,00 €",
+            },
+        ]
+        csv_path = self._create_csv_file(csv_content)
+
+        count = import_traderepublic_from_csv(
+            user=self.user,
+            csv_path=csv_path,
+            account_name="Test Account TR Real Types",
+            currency="EUR",
+        )
+
+        self.assertEqual(count, 1)
+        account = Account.objects.get(name="Test Account TR Real Types", owner=self.user)
+        transaction = Transaction.objects.exclude(amount=Decimal("0")).get(account=account)
+        raw = transaction.raw or {}
+        self.assertEqual(raw.get("eventType"), "TRADING_SAVINGSPLAN_EXECUTED")
+        self.assertTrue(raw.get("is_investment_event"))
+        self.assertEqual(raw.get("isin"), "LU1681048804")
+        self.assertEqual(raw.get("investment_quantity"), "0.443321")
+        self.assertEqual(raw.get("investment_total"), "51.00")
+        self.assertEqual(raw.get("current_price"), "112.80")
+
+    @patch("finance.importers.loader.MarketPriceService")
+    def test_import_traderepublic_infers_quantity_from_unit_price(self, mock_price_service_cls):
+        """Si Titres absent mais Cours du titre présent, inférer la quantité."""
+        mock_price_service = Mock()
+        mock_price_service.get_price_for_isin.return_value = {
+            "price": Decimal("120.00"),
+            "source": "yfinance",
+            "symbol": "TEST.SYM",
+            "priced_at": "2026-04-26T18:00:00+00:00",
+        }
+        mock_price_service_cls.return_value = mock_price_service
+
+        csv_content = [
+            {
+                "timestamp": "03/12/2024",
+                "id": "tx_infer_qty",
+                "title": "S&P 500 EUR (Acc)",
+                "icon": "logos/LU1681048804/v2",
+                "eventType": "TRADING_SAVINGSPLAN_EXECUTED",
+                "amount.value": "-60.00",
+                "Total": "60,00 €",
+                "Cours du titre": "100,00 €",
+            },
+        ]
+        csv_path = self._create_csv_file(csv_content)
+
+        count = import_traderepublic_from_csv(
+            user=self.user,
+            csv_path=csv_path,
+            account_name="Test Account TR Infer Qty",
+            currency="EUR",
+        )
+
+        self.assertEqual(count, 1)
+        account = Account.objects.get(name="Test Account TR Infer Qty", owner=self.user)
+        transaction = Transaction.objects.exclude(amount=Decimal("0")).get(account=account)
+        raw = transaction.raw or {}
+        self.assertEqual(raw.get("investment_quantity"), "0.6")
+        self.assertEqual(raw.get("quantity_inferred"), True)
+        self.assertEqual(raw.get("valuation_partial"), None)
+        self.assertEqual(Decimal(raw.get("current_value")), Decimal("72.00"))
+        self.assertEqual(Decimal(raw.get("profit_loss")), Decimal("12.00"))
+
+    @patch("finance.importers.loader.MarketPriceService")
+    def test_import_traderepublic_estimates_quantity_from_live_price(self, mock_price_service_cls):
+        """Si Titres et Cours du titre absents, estimer la quantité via prix live."""
+        mock_price_service = Mock()
+        mock_price_service.get_price_for_isin.return_value = {
+            "price": Decimal("30.00"),
+            "source": "yfinance",
+            "symbol": "FR0011550185",
+            "priced_at": "2026-04-26T18:00:00+00:00",
+        }
+        mock_price_service_cls.return_value = mock_price_service
+
+        csv_content = [
+            {
+                "timestamp": "22/04/2026",
+                "id": "tx_live_estimate",
+                "title": "S&P 500 EUR (Acc)",
+                "icon": "logos/FR0011550185/v2",
+                "eventType": "TRADING_SAVINGSPLAN_EXECUTED",
+                "amount.value": "-60.00",
+                "Total": "60,00 €",
+            },
+        ]
+        csv_path = self._create_csv_file(csv_content)
+
+        count = import_traderepublic_from_csv(
+            user=self.user,
+            csv_path=csv_path,
+            account_name="Test Account TR Live Estimate",
+            currency="EUR",
+        )
+
+        self.assertEqual(count, 1)
+        account = Account.objects.get(name="Test Account TR Live Estimate", owner=self.user)
+        transaction = Transaction.objects.exclude(amount=Decimal("0")).get(account=account)
+        raw = transaction.raw or {}
+        self.assertEqual(raw.get("quantity_estimated_from_live_price"), True)
+        self.assertEqual(raw.get("investment_quantity"), "2")
+        self.assertEqual(raw.get("valuation_partial"), None)
+        self.assertEqual(raw.get("current_value"), "60.00")
+        self.assertEqual(raw.get("profit_loss"), "0.00")
+
+    @patch("finance.importers.loader.MarketPriceService")
+    def test_import_traderepublic_creates_sync_valuation_snapshot(self, mock_price_service_cls):
+        """Chaque import TR doit enregistrer un snapshot de valorisation historisé."""
+        mock_price_service = Mock()
+        mock_price_service.get_price_for_isin.return_value = {
+            "price": Decimal("120.00"),
+            "source": "yfinance",
+            "symbol": "TEST.SYM",
+            "priced_at": "2026-04-26T18:00:00+00:00",
+        }
+        mock_price_service_cls.return_value = mock_price_service
+
+        csv_content = [
+            {
+                "timestamp": "22/04/2026",
+                "id": "tx_snapshot_1",
+                "title": "ETF test",
+                "icon": "logos/IE000BI8OT95/v2",
+                "eventType": "TRADING_SAVINGSPLAN_EXECUTED",
+                "amount.value": "-60.00",
+                "Titres": "0,5",
+                "Total": "60,00 €",
+            },
+        ]
+        csv_path = self._create_csv_file(csv_content)
+
+        count = import_traderepublic_from_csv(
+            user=self.user,
+            csv_path=csv_path,
+            account_name="Test Account TR Snapshot",
+            currency="EUR",
+        )
+
+        self.assertEqual(count, 1)
+        account = Account.objects.get(name="Test Account TR Snapshot", owner=self.user)
+        tx_count = Transaction.objects.filter(account=account).exclude(amount=Decimal("0")).count()
+        snapshot = (
+            Transaction.objects.filter(account=account, amount=Decimal("0"), raw__is_sync_valuation_snapshot=True)
+            .order_by("-posted_at")
+            .first()
+        )
+        self.assertEqual(tx_count, 1)
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(snapshot.account_balance, Decimal("60.00"))
+
+    @patch("finance.importers.loader.MarketPriceService")
+    def test_import_traderepublic_creates_snapshots_by_portfolio_type(self, mock_price_service_cls):
+        """L'import auto TR crée un snapshot distinct pour CTO/PEA/CRYPTO."""
+        mock_price_service = Mock()
+        mock_price_service.get_price_for_isin.return_value = {
+            "price": Decimal("100.00"),
+            "source": "yfinance",
+            "symbol": "TEST.SYM",
+            "priced_at": "2026-04-26T18:00:00+00:00",
+        }
+        mock_price_service_cls.return_value = mock_price_service
+
+        csv_content = [
+            {
+                "timestamp": "22/04/2026",
+                "id": "tx_cto",
+                "title": "ETF CTO",
+                "icon": "logos/IE000BI8OT95/v2",
+                "eventType": "TRADING_SAVINGSPLAN_EXECUTED",
+                "amount.value": "-10.00",
+                "Titres": "1",
+                "Total": "10,00 €",
+                "portfolio_type": "CTO",
+            },
+            {
+                "timestamp": "22/04/2026",
+                "id": "tx_pea",
+                "title": "ETF PEA",
+                "icon": "logos/FR0011550185/v2",
+                "eventType": "PEA_SAVINGS_PLAN_PAY_IN",
+                "amount.value": "-10.00",
+                "Titres": "1",
+                "Total": "10,00 €",
+                "portfolio_type": "PEA",
+            },
+            {
+                "timestamp": "22/04/2026",
+                "id": "tx_crypto",
+                "title": "BTC",
+                "icon": "logos/XF000BTC0017/v2",
+                "eventType": "TRADING_TRADE_EXECUTED",
+                "amount.value": "-10.00",
+                "Titres": "1",
+                "Total": "10,00 €",
+                "portfolio_type": "CRYPTO",
+            },
+        ]
+        csv_path = self._create_csv_file(csv_content)
+
+        count = import_traderepublic_from_csv(
+            user=self.user,
+            csv_path=csv_path,
+            account_name="Test Account TR Snapshot Types",
+            currency="EUR",
+        )
+
+        self.assertEqual(count, 3)
+        account = Account.objects.get(name="Test Account TR Snapshot Types", owner=self.user)
+        snapshots = Transaction.objects.filter(
+            account=account,
+            amount=Decimal("0"),
+            raw__is_sync_valuation_snapshot=True,
+        )
+        self.assertEqual(snapshots.count(), 3)
+        snapshot_by_type = {
+            tx.raw.get("portfolio_type"): tx.account_balance
+            for tx in snapshots
+        }
+        self.assertEqual(snapshot_by_type.get("CTO"), Decimal("100.00"))
+        self.assertEqual(snapshot_by_type.get("PEA"), Decimal("100.00"))
+        self.assertEqual(snapshot_by_type.get("CRYPTO"), Decimal("100.00"))
+
+    @patch("finance.importers.loader.MarketPriceService")
+    def test_import_traderepublic_uses_existing_isin_mapping_for_portfolio_type(self, mock_price_service_cls):
+        """Réutilise le mapping ISIN->portefeuille déjà connu (ex: snapshots PDF)."""
+        mock_price_service = Mock()
+        mock_price_service.get_price_for_isin.return_value = {
+            "price": Decimal("100.00"),
+            "source": "yfinance",
+            "symbol": "TEST.SYM",
+            "priced_at": "2026-04-26T18:00:00+00:00",
+        }
+        mock_price_service_cls.return_value = mock_price_service
+
+        account = Account.objects.create(
+            owner=self.user,
+            name="Test Account TR Existing Map",
+            type=Account.AccountType.BROKER,
+            provider="traderepublic",
+            currency="EUR",
+        )
+        Transaction.objects.create(
+            account=account,
+            posted_at=timezone.now(),
+            amount=Decimal("0"),
+            description="Snapshot valorisation PEA (import PDF)",
+            currency="EUR",
+            account_balance=Decimal("3700.00"),
+            raw={
+                "portfolio_type": "PEA",
+                "data": {
+                    "titres": [
+                        {"symbole": "FR0011550185", "nom": "ETF test"},
+                    ]
+                },
+            },
+        )
+
+        csv_content = [
+            {
+                "timestamp": "22/04/2026",
+                "id": "tx_pea_map",
+                "title": "ETF test",
+                "icon": "logos/FR0011550185/v2",
+                "eventType": "TRADING_SAVINGSPLAN_EXECUTED",
+                "amount.value": "-10.00",
+                "Titres": "1",
+                "Total": "10,00 €",
+            },
+        ]
+        csv_path = self._create_csv_file(csv_content)
+
+        count = import_traderepublic_from_csv(
+            user=self.user,
+            csv_path=csv_path,
+            account_name="Test Account TR Existing Map",
+            currency="EUR",
+        )
+
+        self.assertEqual(count, 1)
+        imported_tx = Transaction.objects.filter(account=account).exclude(amount=Decimal("0")).first()
+        self.assertIsNotNone(imported_tx)
+        self.assertEqual((imported_tx.raw or {}).get("portfolio_type"), "PEA")
+        pea_snapshot = (
+            Transaction.objects.filter(
+                account=account,
+                amount=Decimal("0"),
+                raw__is_sync_valuation_snapshot=True,
+                raw__portfolio_type="PEA",
+            )
+            .order_by("-posted_at", "-id")
+            .first()
+        )
+        self.assertIsNotNone(pea_snapshot)
+        self.assertEqual(pea_snapshot.account_balance, Decimal("100.00"))
 
     def test_import_traderepublic_error_handling(self):
         """Test gestion d'erreurs pour import Trade Republic."""
