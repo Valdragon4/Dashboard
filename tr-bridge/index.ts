@@ -1,5 +1,5 @@
 import { TradeRepublicApi, createMessage, type Portfolio } from "trapi";
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, renameSync, writeFileSync, unlinkSync } from "fs";
 
 type JsonObject = Record<string, unknown>;
 type PositionLite = {
@@ -87,33 +87,77 @@ function extractTransactionsFromPayload(payload: unknown): unknown[] {
 function extractNextCursor(payload: unknown): string | null {
   if (!isObject(payload)) return null;
 
-  const directKeys = ["next", "nextCursor", "cursor", "after"];
+  const directKeys = [
+    "nextCursor",
+    "next_cursor",
+    "cursorAfter",
+    "cursor",
+    "next",
+    "after",
+    "pageAfter",
+    "nextCursorValue",
+  ];
+
   for (const key of directKeys) {
-    const value = payload[key];
+    const value = (payload as Record<string, unknown>)[key];
     if (typeof value === "string" && value.trim()) return value;
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    if (isObject(value) || Array.isArray(value)) {
+      const nested = findStringByLikelyKeys(value, ["cursor", "after", "nextcursor", "token", "value"]);
+      if (nested) return nested;
+    }
   }
 
-  const cursors = payload.cursors;
+  // Cas courant: payload.cursors.after
+  const cursors = (payload as { cursors?: unknown }).cursors;
   if (isObject(cursors)) {
-    const after = cursors.after;
+    const after = (cursors as Record<string, unknown>).after;
     if (typeof after === "string" && after.trim()) return after;
+    if (typeof after === "number" && Number.isFinite(after)) return String(after);
+    if (isObject(after) || Array.isArray(after)) {
+      const nested = findStringByLikelyKeys(after, ["cursor", "after", "nextcursor", "token", "value"]);
+      if (nested) return nested;
+    }
   }
+
+  // Fallback générique: cherche dans tout l'objet.
+  // (Evite de s'arrêter à la première page si la clé n'est pas exactement `cursors.after`.)
+  const keys = ["nextCursor", "next_cursor", "next", "cursor", "after", "cursorAfter", "pageAfter", "paginationCursor"];
+  const found = findStringByLikelyKeys(payload, keys);
+  if (found && found.trim()) return found;
+
   return null;
 }
 
 async function fetchAllTransactions(
   api: TradeRepublicApi,
   maxTransactions: number,
+  maxPages: number,
 ): Promise<{
   pages: number;
   total_items: number;
   transactions: unknown[];
+  debug_tx_pagination?: {
+    tx_limit: number | "infinity";
+    max_pages: number | "infinity";
+    break_reason: string;
+    next_cursor_samples: Array<{
+      page: number;
+      next_cursor: string | null;
+      page_items_count: number;
+    }>;
+  };
 }> {
   const transactions: unknown[] = [];
   const seenCursors = new Set<string>();
   let cursor: string | null = null;
   let pages = 0;
-  const maxPages = 50;
+  let breakReason = "unknown";
+  const nextCursorSamples: Array<{
+    page: number;
+    next_cursor: string | null;
+    page_items_count: number;
+  }> = [];
 
   while (pages < maxPages) {
     const message = createMessage("timelineTransactions") as Record<string, unknown>;
@@ -121,24 +165,48 @@ async function fetchAllTransactions(
 
     const raw = await subscribeOnceWithTimeout(api, message as ReturnType<typeof createMessage>, 10000);
     const parsed = tryParseJson(raw);
-    if (!parsed) break;
+    if (!parsed) {
+      breakReason = "parsed_null";
+      break;
+    }
 
     const pageItems = extractTransactionsFromPayload(parsed);
     transactions.push(...pageItems);
     pages += 1;
-    if (transactions.length >= maxTransactions) {
+    const next = extractNextCursor(parsed);
+    if (nextCursorSamples.length < 6) {
+      nextCursorSamples.push({ page: pages, next_cursor: next, page_items_count: pageItems.length });
+    }
+
+    if (Number.isFinite(maxTransactions) && transactions.length >= maxTransactions) {
+      breakReason = "tx_limit_reached";
       transactions.splice(maxTransactions);
       break;
     }
-
-    const next = extractNextCursor(parsed);
-    if (!next || seenCursors.has(next)) break;
+    if (!next) {
+      breakReason = "next_cursor_null";
+      break;
+    }
+    if (seenCursors.has(next)) {
+      breakReason = "cursor_repeated";
+      break;
+    }
 
     seenCursors.add(next);
     cursor = next;
   }
 
-  return { pages, total_items: transactions.length, transactions };
+  return {
+    pages,
+    total_items: transactions.length,
+    transactions,
+    debug_tx_pagination: {
+      tx_limit: Number.isFinite(maxTransactions) ? maxTransactions : "infinity",
+      max_pages: Number.isFinite(maxPages) ? maxPages : "infinity",
+      break_reason: breakReason,
+      next_cursor_samples: nextCursorSamples,
+    },
+  };
 }
 
 function compactTransaction(item: unknown): unknown {
@@ -326,6 +394,11 @@ async function main() {
   const [, , phoneNumber, pin, ...flags] = process.argv;
   const diagnosticsEnabled = flags.includes("--diag");
   const jsonMode = flags.includes("--json");
+  const outFileFlagIndex = flags.indexOf("--out-file");
+  const outFile =
+    outFileFlagIndex >= 0 && outFileFlagIndex < flags.length - 1
+      ? (flags[outFileFlagIndex + 1]?.trim() || null)
+      : null;
   const devicePinFlagIndex = flags.indexOf("--device-pin");
   const devicePin =
     devicePinFlagIndex >= 0 && devicePinFlagIndex < flags.length - 1
@@ -335,11 +408,36 @@ async function main() {
   const txLimit =
     txLimitFlagIndex >= 0 && txLimitFlagIndex < flags.length - 1
       ? Number(flags[txLimitFlagIndex + 1])
-      : 80;
-  const maxTransactions = Number.isFinite(txLimit) && txLimit > 0 ? Math.floor(txLimit) : 80;
+      : 5000;
+  // maxTransactions=Infinity => aucune limite (s'arrêtera uniquement via next-cursor/absence de next, etc.)
+  const maxTransactions =
+    Number.isFinite(txLimit) && txLimit > 0 ? Math.floor(txLimit) : Number.POSITIVE_INFINITY;
+
+  const maxPagesFlagIndex = flags.indexOf("--max-pages");
+  const maxPagesRaw =
+    maxPagesFlagIndex >= 0 && maxPagesFlagIndex < flags.length - 1
+      ? Number(flags[maxPagesFlagIndex + 1])
+      : 5000;
+  const maxPages =
+    Number.isFinite(maxPagesRaw) && maxPagesRaw > 0 ? Math.floor(maxPagesRaw) : Number.POSITIVE_INFINITY;
   const verbose = !jsonMode;
+
+  const emitStatusMarker = (status: string) => {
+    // On utilise stdout uniquement pour un petit marqueur texte (pas du JSON),
+    // afin que le backend sache s'il faut demander une 2FA.
+    process.stdout.write(`TR_BRIDGE_STATUS:${status}\n`);
+  };
+
   const emitJson = (payload: object) => {
-    process.stdout.write(`${JSON.stringify(payload)}\n`);
+    if (!outFile) {
+      process.stdout.write(`${JSON.stringify(payload)}\n`);
+      return;
+    }
+
+    // Écriture atomique: éviter que le backend lise un fichier partiellement écrit.
+    const tmpPath = `${outFile}.tmp_${process.pid}`;
+    writeFileSync(tmpPath, JSON.stringify(payload), { encoding: "utf-8" });
+    renameSync(tmpPath, outFile);
   };
 
   // En mode JSON, on supprime tous les logs parasites (y compris ceux de dépendances
@@ -366,6 +464,15 @@ async function main() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const apiAny = api as any;
 
+  // Evite les boucles de reconnexion WebSocket (notamment sur code=3003).
+  // Quand la session WS se ferme, on laisse le flow "full login / device pin"
+  // gérer la demande de 2FA (un seul round), plutôt que de reconnecter X fois.
+  if (typeof apiAny._scheduleReconnect === "function") {
+    apiAny._scheduleReconnect = () => {
+      /* no-op: reconnexion desactivee */
+    };
+  }
+
   // Fermeture propre du browser Chromium pour libérer la RAM
   const closeBrowser = async () => {
     try {
@@ -379,7 +486,13 @@ async function main() {
   // Remplace process.exit pour toujours fermer Chromium avant
   const safeExit = async (code: number, jsonPayload?: object) => {
     await closeBrowser();
-    if (jsonPayload) emitJson(jsonPayload);
+    if (jsonPayload) {
+      if (outFile) {
+        const status = (jsonPayload as { status?: unknown }).status;
+        if (typeof status === "string") emitStatusMarker(status);
+      }
+      emitJson(jsonPayload);
+    }
     process.exit(code);
   };
 
@@ -492,7 +605,7 @@ async function main() {
     log("Comptes detectes:", accountNumbers);
   }
 
-  const transactionsResult = await fetchAllTransactions(api, maxTransactions);
+  const transactionsResult = await fetchAllTransactions(api, maxTransactions, maxPages);
   log(`Transactions récupérées: ${transactionsResult.total_items} sur ${transactionsResult.pages} page(s)`);
 
   let totalValuation = 0;
@@ -704,6 +817,7 @@ async function main() {
       invested_crypto: Number(totalCostBasisCrypto.toFixed(2)),
       total_with_cash: Number((totalMarketValue + totalCash).toFixed(2)),
     },
+    ...(transactionsResult.debug_tx_pagination ? { debug_tx_pagination: transactionsResult.debug_tx_pagination } : {}),
   };
 
   if (verbose) {
@@ -736,6 +850,7 @@ async function main() {
   }
 
   if (jsonMode) {
+    if (outFile) emitStatusMarker("authenticated");
     emitJson(result);
   }
 

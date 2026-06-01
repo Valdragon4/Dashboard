@@ -200,7 +200,14 @@ def sync_bridge_snapshot_for_account(
     phone_number, pin = _resolve_trade_republic_credentials(account)
     payload = fetch_tr_valuation(phone_number=phone_number, pin=pin, device_pin=device_pin)
     import json as _json
-    logger.info("tr_bridge_raw_payload account_id=%s payload=%s", account.pk, _json.dumps(payload, ensure_ascii=False, default=str))
+    # On logue uniquement le diagnostic pagination (pas le payload complet).
+    debug_tx = payload.get("debug_tx_pagination") if isinstance(payload, dict) else None
+    # if isinstance(debug_tx, dict):
+    #     logger.info(
+    #         "tr_bridge_debug_tx_pagination account_id=%s debug=%s",
+    #         account.pk,
+    #         _json.dumps(debug_tx, ensure_ascii=False, default=str),
+    #     )
     _validate_payload(payload)
     source_timestamp = _parse_source_timestamp(payload)
     global_data = payload.get("global") or {}

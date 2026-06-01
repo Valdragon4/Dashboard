@@ -545,7 +545,9 @@ python manage.py sync_tr_valuation
 
 ## 11) Mode JSON pour integration Django/Python
 
-Pour automatiser facilement, le script bridge doit exposer un mode `--json` qui renvoie un objet unique JSON en sortie.
+Pour automatiser facilement, le script bridge doit exposer un mode `--json` et un fichier de sortie `--out-file`.
+
+Le JSON complet est écrit dans `--out-file` et aucun JSON n'est émis sur `stdout` (uniquement un marqueur texte `TR_BRIDGE_STATUS:*`).
 
 ### Pourquoi c'est important
 
@@ -553,7 +555,7 @@ En shell, toute sortie `stdout` est capturee. Si des logs texte sont melanges au
 
 ### Recommandation
 
-- En mode `--json`, n'imprimer que `JSON.stringify(result)` sur `stdout`.
+- En mode `--json`, ne pas émettre de JSON sur `stdout` (uniquement `TR_BRIDGE_STATUS:*`).
 - Rediriger les logs techniques vers `stderr` (ou les desactiver).
 
 ### Exemple PowerShell (robuste)

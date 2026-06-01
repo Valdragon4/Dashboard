@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Créer votre compte — Finance</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              primary: '#6366f1',
+              'primary-dark': '#4f46e5',
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body class="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-purple-50 flex items-center justify-center p-4">
+
+    <div class="absolute inset-0 overflow-hidden pointer-events-none">
+      <div class="absolute -top-40 -right-40 w-80 h-80 bg-indigo-100 rounded-full opacity-50 blur-3xl"></div>
+      <div class="absolute -bottom-40 -left-40 w-80 h-80 bg-purple-100 rounded-full opacity-50 blur-3xl"></div>
+    </div>
+
+    <div class="relative w-full max-w-md">
+      <div class="text-center mb-8">
+        <div class="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-primary to-primary-dark rounded-2xl shadow-lg mb-4">
+          <span class="text-white font-bold text-3xl">$</span>
+        </div>
+        <h1 class="text-3xl font-bold text-gray-900">Finance</h1>
+        <p class="text-gray-500 mt-1 text-sm">Créez votre compte</p>
+      </div>
+
+      <div class="bg-white rounded-2xl shadow-xl border border-gray-100 p-8">
+        <h2 class="text-xl font-semibold text-gray-800 mb-1">Inscription</h2>
+        {% if invitation.email %}
+        <p class="text-sm text-gray-500 mb-5">Invitation destinée à <span class="font-medium text-gray-700">{{ invitation.email }}</span></p>
+        {% else %}
+        <p class="text-sm text-gray-500 mb-5">Vous avez été invité à rejoindre l'application.</p>
+        {% endif %}
+
+        {% if error %}
+        <div class="mb-5 flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
+          <svg class="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+          <p class="text-sm text-red-700 font-medium">{{ error }}</p>
+        </div>
+        {% endif %}
+
+        <form method="post" class="space-y-5">
+          {% csrf_token %}
+
+          <div>
+            <label for="username" class="block text-sm font-medium text-gray-700 mb-1.5">Nom d'utilisateur</label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
+                </svg>
+              </span>
+              <input type="text" name="username" id="username" autofocus required
+                     value="{{ request.POST.username|default:'' }}"
+                     class="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                     placeholder="Votre identifiant">
+            </div>
+          </div>
+
+          <div>
+            <label for="password1" class="block text-sm font-medium text-gray-700 mb-1.5">Mot de passe</label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
+                </svg>
+              </span>
+              <input type="password" name="password1" id="password1" required
+                     class="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                     placeholder="Minimum 8 caractères">
+            </div>
+          </div>
+
+          <div>
+            <label for="password2" class="block text-sm font-medium text-gray-700 mb-1.5">Confirmer le mot de passe</label>
+            <div class="relative">
+              <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                </svg>
+              </span>
+              <input type="password" name="password2" id="password2" required
+                     class="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                     placeholder="Répétez le mot de passe">
+            </div>
+          </div>
+
+          <button type="submit"
+                  class="w-full py-2.5 px-4 bg-gradient-to-r from-primary to-primary-dark text-white font-semibold rounded-xl shadow-md hover:shadow-lg transition-all duration-200 text-sm mt-2">
+            Créer mon compte
+          </button>
+        </form>
+
+        <p class="text-center text-xs text-gray-400 mt-5">
+          Déjà inscrit ? <a href="{% url 'login' %}" class="text-primary hover:underline">Se connecter</a>
+        </p>
+      </div>
+    </div>
+  </body>
+</html>

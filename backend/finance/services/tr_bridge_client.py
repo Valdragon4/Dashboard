@@ -3,7 +3,6 @@ from __future__ import annotations
 import fcntl
 import logging
 import json
-from json import JSONDecoder
 import os
 import subprocess
 import tempfile
@@ -43,6 +42,7 @@ def _is_manual_auth_hint(output: str) -> bool:
     lowered = output.lower()
     return (
         "needs_manual_auth" in lowered
+        or "tr_bridge_status:needs_manual_auth" in lowered
         or "device pin" in lowered
         or "3003" in lowered
         or "please enter the pin received on your phone" in lowered
@@ -78,6 +78,10 @@ def fetch_tr_valuation(
         getattr(settings, "TR_BRIDGE_TIMEOUT_SECONDS", timeout_seconds) or timeout_seconds
     )
     script_path = _script_path()
+    out_file = os.path.join(
+        tempfile.gettempdir(),
+        f"tr_bridge_out_{os.getpid()}_{int(time.time() * 1000)}.json",
+    )
     command = [
         _bun_bin(),
         "run",
@@ -85,9 +89,26 @@ def fetch_tr_valuation(
         phone_number,
         pin,
         "--json",
+        "--out-file",
+        out_file,
     ]
-    tx_limit = int(getattr(settings, "TR_BRIDGE_TX_LIMIT", 80) or 80)
-    command.extend(["--tx-limit", str(tx_limit)])
+    tx_limit_setting = getattr(settings, "TR_BRIDGE_TX_LIMIT", None)
+    # Important: on veut que TR_BRIDGE_TX_LIMIT=0 signifie "illimité".
+    # Donc on ne doit pas utiliser un `... or 80` qui écraserait 0.
+    tx_limit = 80 if tx_limit_setting is None else int(tx_limit_setting)
+    max_pages_setting = getattr(settings, "TR_BRIDGE_MAX_PAGES", None)
+    # Important: on veut que TR_BRIDGE_MAX_PAGES=0 signifie "illimité".
+    max_pages = 5000 if max_pages_setting is None else int(max_pages_setting)
+
+    logger.info(
+        "tr_bridge_client launch_settings tx_limit_setting=%s computed_tx_limit=%s max_pages_setting=%s computed_max_pages=%s",
+        tx_limit_setting,
+        tx_limit,
+        max_pages_setting,
+        max_pages,
+    )
+
+    command.extend(["--tx-limit", str(tx_limit), "--max-pages", str(max_pages)])
     if device_pin:
         command.extend(["--device-pin", device_pin.strip()])
 
@@ -133,8 +154,6 @@ def fetch_tr_valuation(
     stdout = (proc.stdout or "").strip()
     stderr = (proc.stderr or "").strip()
 
-    lines = [line.strip() for line in stdout.splitlines() if line.strip()]
-
     def _is_bridge_payload(candidate) -> bool:
         return (
             isinstance(candidate, dict)
@@ -142,86 +161,51 @@ def fetch_tr_valuation(
             and isinstance(candidate.get("global"), dict)
         )
 
-    def _extract_json_payload(raw_lines: list[str], raw_stdout: str):
-        # 1) Cas simple: dernière ligne JSON
-        for line in reversed(raw_lines):
-            try:
-                parsed = json.loads(line)
-                if _is_bridge_payload(parsed):
-                    return parsed
-            except ValueError:
-                continue
+    def _extract_bridge_status_marker(raw_stdout: str) -> str | None:
+        for line in raw_stdout.splitlines():
+            line = line.strip()
+            if line.startswith("TR_BRIDGE_STATUS:"):
+                return line.split("TR_BRIDGE_STATUS:", 1)[1].strip()
+        return None
 
-        # 2) Cas robuste: stdout contient logs + gros JSON sur plusieurs segments
-        # On scanne tout le texte et on garde le dernier objet JSON décodable.
-        decoder = JSONDecoder()
-        idx = 0
-        best = None
-        text = raw_stdout or ""
-        while idx < len(text):
-            if text[idx] != "{":
-                idx += 1
-                continue
-            try:
-                candidate, end = decoder.raw_decode(text[idx:])
-                if _is_bridge_payload(candidate):
-                    best = candidate
-                idx += max(end, 1)
-            except ValueError:
-                idx += 1
+    bridge_status = _extract_bridge_status_marker(stdout or "")
 
-        # 3) Fallback ultra-robuste: extraction par accolades équilibrées
-        # à partir d'un objet racine bridge {"timestamp": ...}
-        start_token = '{"timestamp"'
-        search_from = 0
-        while True:
-            start = text.find(start_token, search_from)
-            if start == -1:
-                break
-            depth = 0
-            in_string = False
-            escaped = False
-            for pos in range(start, len(text)):
-                ch = text[pos]
-                if in_string:
-                    if escaped:
-                        escaped = False
-                    elif ch == "\\":
-                        escaped = True
-                    elif ch == '"':
-                        in_string = False
-                    continue
+    payload = None
+    raw_file = ""
+    try:
+        # Objectif: si 2FA est requis, inutile de parser le JSON du fichier.
+        if bridge_status != "needs_manual_auth" and os.path.exists(out_file):
+            with open(out_file, "r", encoding="utf-8") as f:
+                raw_file = f.read()
+            if raw_file.strip():
+                candidate = json.loads(raw_file)
+                if _is_bridge_payload(candidate) or (
+                    isinstance(candidate, dict)
+                    and candidate.get("status") in {"needs_manual_auth", "rate_limited"}
+                ):
+                    payload = candidate
+    finally:
+        try:
+            if os.path.exists(out_file):
+                os.unlink(out_file)
+        except OSError:
+            # Nettoyage best-effort.
+            pass
 
-                if ch == '"':
-                    in_string = True
-                    continue
-                if ch == "{":
-                    depth += 1
-                elif ch == "}":
-                    depth -= 1
-                    if depth == 0:
-                        candidate_raw = text[start : pos + 1]
-                        try:
-                            candidate = json.loads(candidate_raw)
-                            if _is_bridge_payload(candidate):
-                                return candidate
-                        except ValueError:
-                            pass
-                        break
-            search_from = start + 1
-        return best
+    if bridge_status == "needs_manual_auth" or (
+        isinstance(payload, dict) and payload.get("status") == "needs_manual_auth"
+    ):
+        raise TradeRepublicBridgeAuthRequired("auth_required")
 
-    payload = _extract_json_payload(lines, stdout)
+    if bridge_status == "rate_limited" or (
+        isinstance(payload, dict) and payload.get("status") == "rate_limited"
+    ):
+        retry = payload.get("retry_after_seconds") if isinstance(payload, dict) else None
+        raise TradeRepublicBridgeError(
+            f"rate_limited: trop de tentatives, réessaie dans {retry}s" if retry else "rate_limited: trop de tentatives"
+        )
 
     if proc.returncode != 0:
-        if isinstance(payload, dict) and payload.get("status") == "needs_manual_auth":
-            raise TradeRepublicBridgeAuthRequired("auth_required")
-        if isinstance(payload, dict) and payload.get("status") == "rate_limited":
-            retry = payload.get("retry_after_seconds")
-            raise TradeRepublicBridgeError(
-                f"rate_limited: trop de tentatives, réessaie dans {retry}s" if retry
-                else "rate_limited: trop de tentatives"
-            )
         if _is_manual_auth_hint(f"{stdout}\n{stderr}"):
             raise TradeRepublicBridgeAuthRequired("auth_required")
         raise TradeRepublicBridgeError(
@@ -229,17 +213,15 @@ def fetch_tr_valuation(
         )
 
     if not payload:
-        raw_output = (stdout or stderr or "").strip()
         max_chars = int(getattr(settings, "TR_BRIDGE_RAW_OUTPUT_MAX_CHARS", 20000) or 20000)
+        raw_output = (raw_file or stdout or stderr or "").strip()
         if len(raw_output) > max_chars:
             raw_output = raw_output[:max_chars] + "\n...[truncated]"
         raise TradeRepublicBridgeError(
-            "bridge_invalid_json_raw_output:\n"
+            "bridge_invalid_json_outfile_output:\n"
             f"{raw_output or '<empty output>'}"
         )
 
-    if isinstance(payload, dict) and payload.get("status") == "needs_manual_auth":
-        raise TradeRepublicBridgeAuthRequired("auth_required")
     return payload
 
 

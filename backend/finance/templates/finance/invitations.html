@@ -1,0 +1,110 @@
+{% extends 'base.html' %}
+{% block title %}Gestion des invitations{% endblock %}
+{% block content %}
+<div class="mb-8">
+  <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+    <div>
+      <h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-1">Invitations</h1>
+      <p class="text-gray-500 dark:text-gray-400 text-sm">Gérez les liens d'invitation pour créer de nouveaux comptes utilisateur.</p>
+    </div>
+    <a href="{% url 'invitation_create' %}" class="inline-flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-xl text-sm font-semibold hover:bg-primary-dark transition-colors shadow-sm self-start">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+      </svg>
+      Nouvelle invitation
+    </a>
+  </div>
+</div>
+
+{% if messages %}
+  {% for m in messages %}
+    <div class="mb-4 p-4 rounded-xl border-l-4 text-sm {% if m.tags == 'error' %}bg-red-50 border-red-400 text-red-700{% elif m.tags == 'success' %}bg-green-50 border-green-400 text-green-700{% else %}bg-blue-50 border-blue-400 text-blue-700{% endif %}">{{ m }}</div>
+  {% endfor %}
+{% endif %}
+
+<div class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+  {% if invitations %}
+  <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+    <thead class="bg-gray-50 dark:bg-gray-700/50">
+      <tr>
+        <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Email / Destinataire</th>
+        <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Statut</th>
+        <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Créée le</th>
+        <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Expiration</th>
+        <th class="px-6 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Compte créé</th>
+        <th class="px-6 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">Actions</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+      {% for inv in invitations %}
+      <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors">
+        <td class="px-6 py-4 text-sm text-gray-800 dark:text-gray-200">
+          {{ inv.email|default:"—" }}
+        </td>
+        <td class="px-6 py-4">
+          {% if inv.is_used %}
+            <span class="px-2.5 py-1 text-xs font-medium bg-gray-100 text-gray-600 rounded-full">Utilisée</span>
+          {% elif inv.is_expired %}
+            <span class="px-2.5 py-1 text-xs font-medium bg-red-100 text-red-700 rounded-full">Expirée</span>
+          {% else %}
+            <span class="px-2.5 py-1 text-xs font-medium bg-green-100 text-green-700 rounded-full">Active</span>
+          {% endif %}
+        </td>
+        <td class="px-6 py-4 text-sm text-gray-600 dark:text-gray-400">{{ inv.created_at|date:"d/m/Y H:i" }}</td>
+        <td class="px-6 py-4 text-sm text-gray-600 dark:text-gray-400">
+          {% if inv.expires_at %}{{ inv.expires_at|date:"d/m/Y H:i" }}{% else %}—{% endif %}
+        </td>
+        <td class="px-6 py-4 text-sm text-gray-800 dark:text-gray-200">
+          {% if inv.used_by %}
+            <span class="font-medium">{{ inv.used_by.username }}</span>
+            <span class="text-xs text-gray-500 block">{{ inv.used_at|date:"d/m/Y H:i" }}</span>
+          {% else %}—{% endif %}
+        </td>
+        <td class="px-6 py-4 text-right">
+          {% if not inv.is_used %}
+            <button
+              onclick="copyLink('{{ request.scheme }}://{{ request.get_host }}{% url 'register_with_invitation' inv.token %}', this)"
+              class="inline-flex items-center gap-1 px-3 py-1 text-xs font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors mr-2"
+              title="Copier le lien d'invitation">
+              📋 Copier le lien
+            </button>
+            {% if not inv.is_expired %}
+            <form method="post" action="{% url 'invitation_delete' inv.token %}" class="inline" onsubmit="return confirm('Supprimer cette invitation ?');">
+              {% csrf_token %}
+              <button type="submit" class="px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors">
+                Supprimer
+              </button>
+            </form>
+            {% endif %}
+          {% else %}
+            <span class="text-xs text-gray-400">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="px-6 py-16 text-center">
+    <svg class="mx-auto h-12 w-12 text-gray-300 dark:text-gray-600 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+    </svg>
+    <p class="text-gray-500 dark:text-gray-400 font-medium mb-1">Aucune invitation</p>
+    <p class="text-sm text-gray-400 dark:text-gray-500">Créez une invitation pour permettre à quelqu'un de s'inscrire.</p>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+  function copyLink(url, btn) {
+    navigator.clipboard.writeText(url).then(() => {
+      const orig = btn.innerHTML;
+      btn.innerHTML = '✓ Copié !';
+      btn.classList.add('text-green-600');
+      setTimeout(() => { btn.innerHTML = orig; btn.classList.remove('text-green-600'); }, 2000);
+    }).catch(() => {
+      prompt('Copiez ce lien :', url);
+    });
+  }
+</script>
+{% endblock %}

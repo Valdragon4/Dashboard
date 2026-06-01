@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:16-alpine
+    restart: always
     mem_limit: 512m
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-dashboard}
@@ -19,6 +20,7 @@ services:
   web:
     build: ./backend
     mem_limit: 1g
+    restart: always
     shm_size: '256m'
     command: bash -c "python manage.py migrate && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --timeout 300 --workers 2"
     env_file: .env
@@ -42,12 +44,14 @@ services:
   redis:
     image: redis:7-alpine
     mem_limit: 128m
+    restart: always
     ports:
       - "127.0.0.1:6380:6379"
 
   worker:
     build: ./backend
     mem_limit: 512m
+    restart: always
     command: celery -A config worker -l info
     env_file: .env
     extra_hosts:
@@ -68,6 +72,7 @@ services:
   beat:
     build: ./backend
     mem_limit: 256m
+    restart: always
     command: celery -A config beat -l info
     env_file: .env
     extra_hosts:

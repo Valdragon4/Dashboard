@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from django.conf import settings
 from django.db import models
 
@@ -347,6 +349,47 @@ class TradeRepublicAccountValuationSnapshot(models.Model):
         indexes = [
             models.Index(fields=["snapshot", "external_account_id"]),
         ]
+
+
+class InvitationToken(models.Model):
+    """Token d'invitation à usage unique pour créer un compte utilisateur."""
+
+    token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="invitations_sent",
+    )
+    email = models.EmailField(blank=True, help_text="Email indicatif (non obligatoire)")
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    used_at = models.DateTimeField(null=True, blank=True)
+    used_by = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="invitation_used",
+    )
+
+    @property
+    def is_used(self) -> bool:
+        return self.used_at is not None
+
+    @property
+    def is_expired(self) -> bool:
+        from django.utils import timezone
+        return self.expires_at is not None and timezone.now() > self.expires_at
+
+    @property
+    def is_valid(self) -> bool:
+        return not self.is_used and not self.is_expired
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"Invitation {self.token} ({'utilisée' if self.is_used else 'disponible'})"
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class TradeRepublicPortfolioSnapshot(models.Model):

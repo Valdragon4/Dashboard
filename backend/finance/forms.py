@@ -24,24 +24,6 @@ class TransactionForm(forms.ModelForm):
         }
 
 
-class ImportStatementForm(forms.Form):
-    IMPORT_CHOICES = (
-        ("boursobank", "Boursobank CSV"),
-        ("hellobank", "Hello bank CSV"),
-        ("generic", "CSV générique"),
-        ("traderepublic", "Trade Republic CSV"),
-    )
-
-    import_type = forms.ChoiceField(choices=IMPORT_CHOICES)
-    account_name = forms.CharField(max_length=120)
-    currency = forms.CharField(
-        max_length=8,
-        required=False,
-        help_text="Optionnel pour Trade Republic",
-    )
-    file = forms.FileField()
-
-
 class BankConnectionForm(forms.ModelForm):
     """
     Formulaire pour créer/modifier une connexion bancaire.
@@ -50,11 +32,12 @@ class BankConnectionForm(forms.ModelForm):
     les credentials avant sauvegarde.
     """
 
-    # Champs communs
-    account = forms.ModelChoiceField(
+    # Sélection multiple de comptes à associer à cette connexion
+    accounts = forms.ModelMultipleChoiceField(
         queryset=Account.objects.none(),
         required=True,
-        help_text="Compte associé à cette connexion bancaire",
+        widget=forms.CheckboxSelectMultiple,
+        help_text="Comptes associés à cette connexion bancaire (un ou plusieurs)",
     )
 
     # Champs conditionnels selon le provider
@@ -105,13 +88,11 @@ class BankConnectionForm(forms.ModelForm):
         """
         super().__init__(*args, **kwargs)
         self.user = user
-        self.fields["account"].queryset = Account.objects.filter(owner=user)
+        self.fields["accounts"].queryset = Account.objects.filter(owner=user)
 
-        # Si on modifie une connexion existante, pré-remplir le compte
+        # Si on modifie une connexion existante, pré-sélectionner les comptes déjà liés
         if self.instance and self.instance.pk:
-            self.fields["account"].initial = (
-                Account.objects.filter(bank_connection=self.instance).first()
-            )
+            self.fields["accounts"].initial = Account.objects.filter(bank_connection=self.instance)
 
     def clean(self):
         """
@@ -150,10 +131,11 @@ class BankConnectionForm(forms.ModelForm):
         instance = super().save(commit=False)
         instance.owner = self.user
 
-        # Si account_name n'est pas fourni, utiliser le nom du compte sélectionné
-        account = self.cleaned_data.get("account")
-        if account and not instance.account_name:
-            instance.account_name = account.name
+        selected_accounts = self.cleaned_data.get("accounts", [])
+
+        # account_name par défaut : noms des comptes sélectionnés
+        if not instance.account_name and selected_accounts:
+            instance.account_name = ", ".join(a.name for a in selected_accounts)
 
         # Construire le dictionnaire de credentials selon le provider
         provider = self.cleaned_data["provider"]
@@ -174,19 +156,24 @@ class BankConnectionForm(forms.ModelForm):
             if self.cleaned_data.get("two_fa_code"):
                 credentials["2fa_code"] = self.cleaned_data["two_fa_code"]
 
-        # Chiffrer les credentials avant sauvegarde
         if credentials:
             instance.encrypted_credentials = EncryptionService.encrypt_credentials(credentials)
 
         if commit:
             instance.save()
 
-            # Associer le compte à la connexion bancaire
-            if account:
+            selected_ids = {a.id for a in selected_accounts}
+
+            # Délier les comptes qui ne sont plus sélectionnés
+            Account.objects.filter(bank_connection=instance).exclude(id__in=selected_ids).update(
+                bank_connection=None, auto_sync_enabled=False
+            )
+
+            # Associer/mettre à jour les comptes sélectionnés
+            for account in selected_accounts:
                 account.bank_connection = instance
-                # Activer la synchronisation sur le compte si elle est activée sur la connexion
                 account.auto_sync_enabled = instance.auto_sync_enabled
-                account.save()
+                account.save(update_fields=["bank_connection", "auto_sync_enabled"])
 
         return instance
 

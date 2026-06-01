@@ -178,7 +178,17 @@ TR_BRIDGE_SCRIPT_PATH = os.getenv("TR_BRIDGE_SCRIPT_PATH", "")
 TR_BRIDGE_CWD = os.getenv("TR_BRIDGE_CWD", "")
 TR_BRIDGE_TIMEOUT_SECONDS = int(os.getenv("TR_BRIDGE_TIMEOUT_SECONDS", "90"))
 TR_BRIDGE_RAW_OUTPUT_MAX_CHARS = int(os.getenv("TR_BRIDGE_RAW_OUTPUT_MAX_CHARS", "20000"))
-TR_BRIDGE_TX_LIMIT = int(os.getenv("TR_BRIDGE_TX_LIMIT", "80"))
+#
+# Limite du nombre de transactions récupérées par le bridge.
+# - mets une valeur élevée (ex: 5000) pour couvrir la plupart des cas
+# - mets 0 pour considérer "illimité" (taille bornée uniquement par les arrêts naturels: absence de next cursor, etc.)
+#
+TR_BRIDGE_TX_LIMIT = int(os.getenv("TR_BRIDGE_TX_LIMIT", "5000"))
+
+# Limite du nombre de pages (pagination `nextCursor`) récupérées par le bridge.
+# - mets 0 pour considérer "illimité" (taille bornée uniquement par l'absence de next cursor,
+#   ou la répétition d'un cursor).
+TR_BRIDGE_MAX_PAGES = int(os.getenv("TR_BRIDGE_MAX_PAGES", "5000"))
 import json as _json
 TR_ACCOUNT_TYPE_MAP: dict[str, str] = _json.loads(os.getenv("TR_ACCOUNT_TYPE_MAP", "{}"))
 del _json

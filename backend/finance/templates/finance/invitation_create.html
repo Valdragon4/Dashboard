@@ -1,0 +1,52 @@
+{% extends 'base.html' %}
+{% block title %}Créer une invitation{% endblock %}
+{% block content %}
+<div class="mb-6 flex items-center gap-3">
+  <a href="{% url 'invitation_list' %}" class="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300">
+    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+    </svg>
+  </a>
+  <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Nouvelle invitation</h1>
+</div>
+
+<div class="max-w-lg bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-8">
+  <p class="text-sm text-gray-600 dark:text-gray-400 mb-6">
+    Générez un lien d'inscription à usage unique. La personne qui reçoit ce lien pourra créer son propre compte.
+  </p>
+  <form method="post" class="space-y-5">
+    {% csrf_token %}
+
+    <div>
+      <label for="email" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Email (optionnel)</label>
+      <input type="email" name="email" id="email"
+             class="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+             placeholder="invité@exemple.com">
+      <p class="mt-1 text-xs text-gray-400">Pour votre référence uniquement, pas envoyé automatiquement.</p>
+    </div>
+
+    <div>
+      <label for="expires_days" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">Expiration (jours)</label>
+      <select name="expires_days" id="expires_days"
+              class="w-full px-4 py-2.5 border border-gray-300 dark:border-gray-600 rounded-xl text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-primary/50">
+        <option value="1">1 jour</option>
+        <option value="3">3 jours</option>
+        <option value="7" selected>7 jours</option>
+        <option value="30">30 jours</option>
+        <option value="365">1 an</option>
+      </select>
+    </div>
+
+    <div class="flex gap-3 pt-2">
+      <button type="submit"
+              class="flex-1 py-2.5 bg-gradient-to-r from-primary to-primary-dark text-white font-semibold rounded-xl shadow-sm hover:shadow-md transition-all text-sm">
+        Créer le lien d'invitation
+      </button>
+      <a href="{% url 'invitation_list' %}"
+         class="px-5 py-2.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-xl text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
+        Annuler
+      </a>
+    </div>
+  </form>
+</div>
+{% endblock %}

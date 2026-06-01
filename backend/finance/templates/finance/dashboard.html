@@ -100,11 +100,30 @@
   <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
     <!-- Solde courant -->
     <div class="bg-gradient-to-br from-primary to-primary-dark rounded-2xl shadow-lg p-6 text-white">
-      <div class="flex items-center justify-between mb-2">
-        <span class="text-primary-light text-sm font-medium">Solde courant</span>
-        <svg class="w-6 h-6 text-primary-light" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-        </svg>
+      <div class="mb-2">
+        <div class="flex items-center justify-between">
+          <span class="text-primary-light text-sm font-medium">Solde courant</span>
+          <svg class="w-6 h-6 text-primary-light" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+          </svg>
+        </div>
+        <form method="get" class="mt-2 w-fit">
+          {% if selected_month %}
+          <input type="hidden" name="month" value="{{ selected_month }}">
+          {% elif is_custom_period %}
+          <input type="hidden" name="start_date" value="{{ start_date }}">
+          <input type="hidden" name="end_date" value="{{ end_date }}">
+          {% endif %}
+          <label for="current_balance_date" class="block text-[10px] text-primary-light/90 mb-1">Date du solde</label>
+          <input
+            id="current_balance_date"
+            name="current_balance_date"
+            type="date"
+            value="{{ current_balance_date }}"
+            onchange="this.form.submit()"
+            class="w-[170px] max-w-full bg-white/20 border border-white/30 text-white text-xs rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-white/40"
+          >
+        </form>
       </div>
       <div class="text-3xl font-bold mb-1"><span class="amount-value">{{ checking_balance|floatformat:2 }} €</span></div>
       <div class="text-xs text-primary-light">
@@ -113,7 +132,7 @@
         {% else %}
           <span class="text-red-300 amount-value">{{ period_balance|floatformat:2 }} €</span>
         {% endif %}
-        cette période
+        vs veille
       </div>
     </div>
 

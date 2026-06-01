@@ -10,6 +10,7 @@ Pour BoursoBank, les retries sont limités à 1 par phase pour garantir une sync
 
 import logging
 import time
+import unicodedata
 from datetime import datetime
 from decimal import Decimal
 from typing import Dict, Optional
@@ -126,23 +127,67 @@ class SyncService:
     _category_cache: Dict[str, Optional["Category"]] = {}
 
     @staticmethod
+    def _normalize_category_label(value: str) -> str:
+        if not value:
+            return ""
+        normalized = unicodedata.normalize("NFKD", value)
+        normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        normalized = normalized.lower()
+        # Supprime ponctuation/variantes typographiques pour matcher les libellés Bourso.
+        cleaned = []
+        for ch in normalized:
+            if ch.isalnum():
+                cleaned.append(ch)
+            elif ch.isspace():
+                cleaned.append(" ")
+        return " ".join("".join(cleaned).split())
+
+    @staticmethod
     def _resolve_category(raw: Dict) -> Optional["Category"]:
         from finance.models import Category as Cat
 
-        label = (raw.get("boursobank_category_label") or "").strip()
+        label = (
+            raw.get("boursobank_category_label")
+            or raw.get("category_label")
+            or raw.get("category")
+            or ""
+        ).strip()
         if not label:
             return None
-        if label in SyncService._category_cache:
-            return SyncService._category_cache[label]
+        parent_label = (
+            raw.get("boursobank_category_parent_label")
+            or raw.get("category_parent_label")
+            or ""
+        ).strip()
+        cache_key = f"{parent_label}|{label}"
+        if cache_key in SyncService._category_cache:
+            return SyncService._category_cache[cache_key]
 
-        parent_label = (raw.get("boursobank_category_parent_label") or "").strip()
         cat = None
         if parent_label:
             cat = Cat.objects.filter(name=label, parent__name=parent_label).first()
         if cat is None:
             cat = Cat.objects.filter(name=label).first()
 
-        SyncService._category_cache[label] = cat
+        if cat is None:
+            normalized_label = SyncService._normalize_category_label(label)
+            normalized_parent = SyncService._normalize_category_label(parent_label)
+            if normalized_label:
+                candidates = Cat.objects.select_related("parent").all()
+                for candidate in candidates:
+                    candidate_name_norm = SyncService._normalize_category_label(candidate.name)
+                    if candidate_name_norm != normalized_label:
+                        continue
+                    if normalized_parent:
+                        candidate_parent_norm = SyncService._normalize_category_label(
+                            candidate.parent.name if candidate.parent else ""
+                        )
+                        if candidate_parent_norm != normalized_parent:
+                            continue
+                    cat = candidate
+                    break
+
+        SyncService._category_cache[cache_key] = cat
         return cat
 
     @staticmethod
@@ -184,6 +229,11 @@ class SyncService:
 
         category = SyncService._resolve_category(raw)
         defaults = {"currency": account.currency or "EUR", "raw": raw}
+        if transaction_data.get("account_balance") is not None:
+            try:
+                defaults["account_balance"] = Decimal(str(transaction_data.get("account_balance")))
+            except Exception:
+                pass
         if category is not None:
             defaults["category"] = category
 
@@ -224,6 +274,46 @@ class SyncService:
             description=description,
             **defaults,
         )
+
+    @staticmethod
+    def _normalize_boursorama_transactions(transactions_data: list[Dict], balance: Decimal | None) -> None:
+        """
+        Normalise les transactions Bourso pour un tri stable et des soldes cohérents.
+
+        Le connecteur Bourso renvoie souvent des `posted_at` à minuit (sans heure) pour
+        de nombreuses opérations d'un même jour. On injecte donc une granularité temporelle
+        cohérente selon l'ordre source (supposé du plus récent au plus ancien), et on
+        calcule un `account_balance` synthétique quand le solde courant est disponible.
+        """
+        if not transactions_data:
+            return
+
+        per_day_rank: Dict = {}
+        synthetic_balance = Decimal(str(balance)) if balance is not None else None
+
+        for tx in transactions_data:
+            posted_at = tx.get("posted_at")
+            if posted_at and timezone.is_aware(posted_at):
+                day = posted_at.date()
+                rank = per_day_rank.get(day, 0)
+                # Plus récent = seconde plus élevée; ordre stable même à date identique.
+                second_of_day = max(0, 86399 - rank)
+                normalized = posted_at.replace(
+                    hour=second_of_day // 3600,
+                    minute=(second_of_day % 3600) // 60,
+                    second=second_of_day % 60,
+                    microsecond=0,
+                )
+                tx["posted_at"] = normalized
+                per_day_rank[day] = rank + 1
+
+            if synthetic_balance is not None:
+                tx["account_balance"] = synthetic_balance
+                try:
+                    amount = Decimal(str(tx.get("amount") or 0))
+                except Exception:
+                    amount = Decimal("0")
+                synthetic_balance = synthetic_balance - amount
 
     @staticmethod
     def sync_account(
@@ -358,6 +448,9 @@ class SyncService:
             logger.info("phase=balance elapsed_ms=%d result=%s balance=%s",
                         bal_ms, bal_result, balance)
 
+            if provider == "boursorama":
+                SyncService._normalize_boursorama_transactions(transactions_data, balance)
+
             # --- Disconnect --------------------------------------------------
             try:
                 connector.disconnect()
@@ -444,6 +537,25 @@ class SyncService:
             if balance_error:
                 error_parts.append(f"balance: {balance_error[:150]}")
             error_summary = "; ".join(error_parts) if error_parts else ""
+
+            if tx_error_code and transactions_count == 0:
+                sync_log.status = SyncLog.Status.ERROR
+                sync_log.completed_at = timezone.now()
+                sync_log.transactions_count = 0
+                sync_log.error_message = (error_summary or _business_message(tx_error_code))[:1000]
+                sync_log.save()
+                bank_connection.sync_status = BankConnection.SyncStatus.ERROR
+                bank_connection.save()
+                logger.warning(
+                    "sync_done provider=%s account=%s total_ms=%d result=error_no_transactions error=%s",
+                    provider, account.id, total_ms, error_summary or tx_error_code,
+                )
+                return {
+                    "success": False,
+                    "transactions_count": 0,
+                    "sync_log_id": sync_log.id,
+                    "error": error_summary or _business_message(tx_error_code),
+                }
 
             sync_log.status = SyncLog.Status.SUCCESS
             sync_log.completed_at = timezone.now()

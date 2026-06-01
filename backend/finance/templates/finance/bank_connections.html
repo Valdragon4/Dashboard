@@ -4,10 +4,10 @@
   <div class="mb-8">
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
       <div>
-        <h1 class="text-3xl font-bold text-gray-900 mb-2">Connexions Bancaires</h1>
-        <p class="text-gray-600">Gérez vos connexions bancaires pour la synchronisation automatique</p>
+        <h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">Connexions Bancaires</h1>
+        <p class="text-gray-600 dark:text-gray-400">Gérez vos connexions bancaires et les comptes associés</p>
       </div>
-      <a href="{% url 'bank_connection_create' %}" class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors shadow-sm flex items-center gap-2">
+      <a href="{% url 'bank_connection_create' %}" class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors shadow-sm flex items-center gap-2 self-start">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
         </svg>
@@ -26,116 +26,149 @@
     </div>
   {% endif %}
 
-  <div class="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-    {% if connections %}
-      <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gradient-to-r from-gray-50 to-gray-100">
-            <tr>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Compte</th>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Provider</th>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Statut</th>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Dernière sync</th>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 uppercase tracking-wider">Transactions</th>
-              <th class="px-6 py-4 text-right text-xs font-semibold text-gray-700 uppercase tracking-wider">Actions</th>
-            </tr>
-          </thead>
-          <tbody class="bg-white divide-y divide-gray-200">
-            {% for connection in connections %}
-            <tr class="hover:bg-gray-50 transition-colors">
-              <td class="px-6 py-4 whitespace-nowrap">
-                <div class="font-semibold text-gray-900">{{ connection.account_name }}</div>
-                {% if connection.linked_account %}
-                  <div class="text-sm text-gray-500">{{ connection.linked_account.name }}</div>
-                {% endif %}
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap">
-                <span class="px-3 py-1 text-xs font-medium rounded-full {% if connection.provider == 'trade_republic' %}bg-purple-100 text-purple-800{% elif connection.provider == 'boursorama' %}bg-blue-100 text-blue-800{% elif connection.provider == 'hellobank' %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-800{% endif %}">
-                  {{ connection.get_provider_display }}
-                </span>
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap">
-                {% if connection.sync_status == 'success' %}
-                  <span class="sync-status-badge px-3 py-1 text-xs font-medium bg-green-100 text-green-800 rounded-full">✓ Succès</span>
-                {% elif connection.sync_status == 'error' %}
-                  <span class="sync-status-badge px-3 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-full">✗ Erreur</span>
-                {% elif connection.sync_status == 'syncing' %}
-                  <span class="sync-status-badge px-3 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full">⟳ En cours</span>
-                {% else %}
-                  <span class="sync-status-badge px-3 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded-full">⏸ En attente</span>
-                {% endif %}
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                {% if connection.last_sync_at %}
-                  {{ connection.last_sync_at|date:"d/m/Y H:i" }}
-                {% else %}
-                  <span class="text-gray-400">Jamais</span>
-                {% endif %}
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                {{ connection.transactions_count }} transaction{{ connection.transactions_count|pluralize }}
-                <div class="mt-1">
-                  <a href="{% url 'sync_logs_list' %}?connection_id={{ connection.id }}" class="text-xs text-primary hover:underline">
-                    Voir les logs
-                  </a>
-                </div>
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                <div class="flex items-center justify-end gap-2">
-                  {% if connection.linked_account %}
-                    <button
-                      type="button"
-                      class="sync-button px-3 py-1 text-primary hover:text-primary-dark hover:bg-primary/10 rounded-lg transition-colors text-sm"
-                      title="Synchroniser maintenant"
-                      data-account-id="{{ connection.linked_account.id }}"
-                      data-connection-id="{{ connection.id }}"
-                    >
-                      ⟳ Sync
-                    </button>
-                  {% else %}
-                    <span class="px-3 py-1 text-gray-400 text-sm" title="Aucun compte associé">⟳ Sync</span>
-                  {% endif %}
-                  <a href="{% url 'bank_connection_update' connection.id %}" class="px-3 py-1 text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-lg transition-colors text-sm" title="Modifier">
-                    ✎ Modifier
-                  </a>
-                  <form method="post" action="{% url 'bank_connection_delete' connection.id %}" onsubmit="return confirm('Êtes-vous sûr de vouloir supprimer cette connexion bancaire ? Cette action est irréversible.');" class="inline">
-                    {% csrf_token %}
-                    <button type="submit" class="px-3 py-1 text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors text-sm" title="Supprimer">
-                      🗑 Supprimer
-                    </button>
-                  </form>
-                </div>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
-    {% else %}
-      <div class="px-6 py-12 text-center text-gray-500">
-        <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
-        </svg>
-        <p class="text-lg font-medium">Aucune connexion bancaire</p>
-        <p class="text-sm mt-2">Commencez par ajouter une connexion bancaire pour synchroniser automatiquement vos comptes</p>
-        <a href="{% url 'bank_connection_create' %}" class="mt-4 inline-block px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors">
-          Ajouter une connexion
-        </a>
-      </div>
-    {% endif %}
-  </div>
-  <script>
-    async function parseApiResponse(response) {
-      const rawText = await response.text();
-      let data = null;
-      try {
-        data = rawText ? JSON.parse(rawText) : null;
-      } catch {
-        data = null;
-      }
-      return { status: response.status, ok: response.ok, data, rawText };
-    }
+  {% if connections %}
+    <div class="grid gap-5">
+      {% for connection in connections %}
+      <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden" id="connection-card-{{ connection.id }}">
 
+        <!-- Header de la connexion -->
+        <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div class="flex items-center gap-3">
+            <!-- Provider icon -->
+            <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0
+              {% if connection.provider == 'trade_republic' %}bg-purple-100{% elif connection.provider == 'boursorama' %}bg-blue-100{% elif connection.provider == 'hellobank' %}bg-green-100{% else %}bg-gray-100{% endif %}">
+              {% if connection.provider == 'trade_republic' %}
+                <span class="font-bold text-purple-700 text-sm">TR</span>
+              {% elif connection.provider == 'boursorama' %}
+                <span class="font-bold text-blue-700 text-sm">BB</span>
+              {% elif connection.provider == 'hellobank' %}
+                <span class="font-bold text-green-700 text-sm">HB</span>
+              {% else %}
+                <span class="font-bold text-gray-700 text-sm">??</span>
+              {% endif %}
+            </div>
+            <div>
+              <h2 class="font-semibold text-gray-900 dark:text-white text-base">{{ connection.account_name }}</h2>
+              <span class="px-2 py-0.5 text-xs font-medium rounded-full
+                {% if connection.provider == 'trade_republic' %}bg-purple-100 text-purple-800{% elif connection.provider == 'boursorama' %}bg-blue-100 text-blue-800{% elif connection.provider == 'hellobank' %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-800{% endif %}">
+                {{ connection.get_provider_display }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Statut global + actions de la connexion -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <!-- Statut sync global -->
+            {% if connection.sync_status == 'success' %}
+              <span class="sync-status-badge-{{ connection.id }} px-3 py-1 text-xs font-medium bg-green-100 text-green-800 rounded-full">✓ Succès</span>
+            {% elif connection.sync_status == 'error' %}
+              <span class="sync-status-badge-{{ connection.id }} px-3 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-full">✗ Erreur</span>
+            {% elif connection.sync_status == 'syncing' %}
+              <span class="sync-status-badge-{{ connection.id }} px-3 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full">⟳ En cours</span>
+            {% else %}
+              <span class="sync-status-badge-{{ connection.id }} px-3 py-1 text-xs font-medium bg-gray-100 text-gray-800 rounded-full">⏸ En attente</span>
+            {% endif %}
+
+            {% if connection.last_sync_at %}
+              <span class="text-xs text-gray-500 dark:text-gray-400">{{ connection.last_sync_at|date:"d/m H:i" }}</span>
+            {% endif %}
+
+            <a href="{% url 'sync_logs_list' %}?connection_id={{ connection.id }}" class="text-xs text-primary hover:underline">
+              Logs ({{ connection.transactions_count }})
+            </a>
+            <a href="{% url 'bank_connection_update' connection.id %}" class="px-2.5 py-1 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+              ✎ Modifier
+            </a>
+            <form method="post" action="{% url 'bank_connection_delete' connection.id %}" onsubmit="return confirm('Supprimer cette connexion ?');" class="inline">
+              {% csrf_token %}
+              <button type="submit" class="px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors">
+                🗑 Supprimer
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <!-- Comptes associés -->
+        <div class="px-6 py-4">
+          {% if connection.linked_accounts %}
+            <p class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+              {{ connection.linked_accounts|length }} compte{{ connection.linked_accounts|length|pluralize }} lié{{ connection.linked_accounts|length|pluralize }}
+            </p>
+            <div class="grid gap-2">
+              {% for account in connection.linked_accounts %}
+              <div class="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-600">
+                <div class="flex items-center gap-3 min-w-0">
+                  <!-- Type badge -->
+                  <span class="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0
+                    {% if account.type == 'checking' %}bg-blue-100 text-blue-700{% elif account.type == 'broker' %}bg-purple-100 text-purple-700{% elif account.type == 'savings' %}bg-green-100 text-green-700{% else %}bg-gray-100 text-gray-700{% endif %} text-xs font-bold">
+                    {% if account.type == 'checking' %}CC{% elif account.type == 'broker' %}Inv{% elif account.type == 'savings' %}Ep{% else %}CA{% endif %}
+                  </span>
+                  <div class="min-w-0">
+                    <a href="{% url 'account_detail' account.id %}" class="text-sm font-medium text-gray-900 dark:text-white hover:text-primary truncate block">
+                      {{ account.name }}
+                    </a>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ account.get_type_display }}{% if account.auto_sync_enabled %} · Auto-sync activée{% endif %}</p>
+                  </div>
+                </div>
+
+                <!-- Actions par compte -->
+                <div class="flex items-center gap-2 flex-shrink-0">
+                  <a href="/transactions/?account={{ account.id }}" class="px-2.5 py-1 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors">
+                    Transactions
+                  </a>
+                  <button
+                    type="button"
+                    class="sync-btn px-3 py-1 text-xs font-medium text-primary hover:text-white hover:bg-primary rounded-lg border border-primary/30 hover:border-primary transition-colors"
+                    data-account-id="{{ account.id }}"
+                    data-connection-id="{{ connection.id }}"
+                  >
+                    ⟳ Sync
+                  </button>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+
+            <!-- Sync tous les comptes de cette connexion -->
+            {% if connection.linked_accounts|length > 1 %}
+            <button
+              type="button"
+              class="sync-all-btn mt-3 w-full py-2 text-xs font-medium text-center text-primary hover:text-white hover:bg-primary rounded-xl border border-primary/30 hover:border-primary transition-colors"
+              data-connection-id="{{ connection.id }}"
+              data-account-ids="{% for a in connection.linked_accounts %}{{ a.id }}{% if not forloop.last %},{% endif %}{% endfor %}"
+            >
+              ⟳ Synchroniser tous les comptes ({{ connection.linked_accounts|length }})
+            </button>
+            {% endif %}
+
+          {% else %}
+            <div class="flex items-center gap-3 py-2 text-sm text-gray-500 dark:text-gray-400">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+              </svg>
+              Aucun compte lié.
+              <a href="{% url 'bank_connection_update' connection.id %}" class="text-primary hover:underline">Associer des comptes →</a>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+  {% else %}
+    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 px-6 py-16 text-center">
+      <svg class="mx-auto h-14 w-14 text-gray-300 dark:text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+      </svg>
+      <p class="text-lg font-semibold text-gray-700 dark:text-gray-300">Aucune connexion bancaire</p>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-2 mb-6">Ajoutez une connexion pour synchroniser automatiquement vos comptes</p>
+      <a href="{% url 'bank_connection_create' %}" class="inline-block px-5 py-2.5 bg-primary text-white rounded-xl text-sm font-semibold hover:bg-primary-dark transition-colors shadow-sm">
+        Ajouter une connexion
+      </a>
+    </div>
+  {% endif %}
+
+  <script>
     function getCookie(name) {
       const value = `; ${document.cookie}`;
       const parts = value.split(`; ${name}=`);
@@ -143,62 +176,81 @@
       return '';
     }
 
-    async function runAccountSync(accountId, button) {
+    async function syncAccount(accountId, btn) {
       const csrftoken = getCookie('csrftoken');
-      const originalText = button.textContent;
-      const row = button.closest('tr');
-      const statusBadge = row ? row.querySelector('.sync-status-badge') : null;
-      button.disabled = true;
-      button.innerHTML = '<span class="animate-spin">⟳</span> Sync...';
-      if (statusBadge) {
-        statusBadge.className = 'sync-status-badge px-3 py-1 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full';
-        statusBadge.textContent = '⟳ En cours';
-      }
+      const originalText = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="animate-spin inline-block">⟳</span> ...';
+
       try {
-        const response = await fetch(`/api/accounts/${accountId}/sync/`, {
+        const resp = await fetch(`/api/accounts/${accountId}/sync/`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': csrftoken,
-          },
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
         });
-        const parsed = await parseApiResponse(response);
-        const { status, ok, data, rawText } = parsed;
+        const data = await resp.json().catch(() => ({}));
 
-        if (status === 409 && data && data.auth_required) {
-          const code = window.prompt('Code 2FA Trade Republic requis. Entre le code reçu par SMS :');
-          if (!code) throw new Error('Code 2FA manquant');
-
-          const retryResp = await fetch(`/api/accounts/${accountId}/sync/`, {
+        if (resp.status === 409 && data.auth_required) {
+          const code = window.prompt('Code 2FA Trade Republic requis. Entrez le code reçu par SMS :');
+          if (!code) { btn.innerHTML = originalText; btn.disabled = false; return; }
+          const r2 = await fetch(`/api/accounts/${accountId}/sync/`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CSRFToken': csrftoken,
-            },
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
             body: JSON.stringify({ two_fa_code: code }),
           });
-          const retryParsed = await parseApiResponse(retryResp);
-          const retryData = retryParsed.data;
-          if (!retryResp.ok || !retryData.success) throw new Error(retryData.error || 'Sync impossible après 2FA');
-        } else if (!ok || !data || !data.success) {
-          throw new Error((data && data.error) || rawText || `Erreur HTTP ${status}`);
+          const d2 = await r2.json().catch(() => ({}));
+          if (!r2.ok || !d2.success) throw new Error(d2.error || 'Sync impossible après 2FA');
+        } else if (!resp.ok || !data.success) {
+          throw new Error(data.error || `Erreur HTTP ${resp.status}`);
         }
 
         window.location.reload();
-      } catch (error) {
-        if (statusBadge) {
-          statusBadge.className = 'sync-status-badge px-3 py-1 text-xs font-medium bg-red-100 text-red-800 rounded-full';
-          statusBadge.textContent = '✗ Erreur';
-        }
-        alert(`Erreur : ${error.message || 'Synchronisation impossible'}`);
-      } finally {
-        button.disabled = false;
-        button.textContent = originalText;
+      } catch (err) {
+        alert(`Erreur sync : ${err.message}`);
+        btn.innerHTML = originalText;
+        btn.disabled = false;
       }
     }
 
-    document.querySelectorAll('.sync-button[data-account-id]').forEach((button) => {
-      button.addEventListener('click', () => runAccountSync(button.dataset.accountId, button));
+    // Sync individuel par compte
+    document.querySelectorAll('.sync-btn[data-account-id]').forEach(btn => {
+      btn.addEventListener('click', () => syncAccount(btn.dataset.accountId, btn));
+    });
+
+    // Sync tous les comptes d'une connexion en séquence
+    document.querySelectorAll('.sync-all-btn[data-connection-id]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const accountIds = btn.dataset.accountIds.split(',').map(id => parseInt(id.trim())).filter(Boolean);
+        const originalText = btn.innerHTML;
+        btn.disabled = true;
+
+        for (let i = 0; i < accountIds.length; i++) {
+          btn.innerHTML = `⟳ Sync compte ${i + 1}/${accountIds.length}...`;
+          const csrftoken = getCookie('csrftoken');
+          try {
+            const resp = await fetch(`/api/accounts/${accountIds[i]}/sync/`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+            });
+            const data = await resp.json().catch(() => ({}));
+            if (resp.status === 409 && data.auth_required) {
+              const code = window.prompt(`Code 2FA requis pour le compte ${i + 1}/${accountIds.length} :`);
+              if (code) {
+                await fetch(`/api/accounts/${accountIds[i]}/sync/`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+                  body: JSON.stringify({ two_fa_code: code }),
+                });
+              }
+            }
+          } catch (err) {
+            console.warn(`Sync account ${accountIds[i]} failed: ${err.message}`);
+          }
+        }
+
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+        window.location.reload();
+      });
     });
   </script>
 {% endblock %}

@@ -8,14 +8,10 @@ from django.contrib import messages
 from django.shortcuts import redirect, render, get_object_or_404
 from django.http import HttpRequest, HttpResponse, HttpResponseBadRequest
 from django.urls import reverse
-from django.core.files.uploadedfile import UploadedFile
 from django.core.paginator import Paginator
-from tempfile import NamedTemporaryFile
-from pathlib import Path
 import os
 import csv
 import logging
-import re
 
 from django.conf import settings
 from django.utils import timezone
@@ -29,18 +25,15 @@ from .models import (
     SyncLog,
     TradeRepublicValuationSnapshot,
     TradeRepublicPortfolioSnapshot,
+    InvitationToken,
 )
-from .forms import AccountForm, TransactionForm, ImportStatementForm, BankConnectionForm
-from .importers.loader import import_bank_statement_from_csv, import_traderepublic_from_csv
-from .importers.traderepublic_scraper import TradeRepublicScraper
+from .forms import AccountForm, TransactionForm, BankConnectionForm
 from .services.tr_bridge_sync import sync_bridge_snapshot_with_auth_handling, get_bridge_auth_status_safe
 from .services.tr_bridge_client import TradeRepublicBridgeError
-from .services.encryption_service import EncryptionService, EncryptionError
+from .services.encryption_service import EncryptionService
 from django.http import JsonResponse
 from django.utils.safestring import mark_safe
 import json
-import PyPDF2
-import openai
 from decimal import Decimal
 
 
@@ -218,10 +211,35 @@ def month_range(target: date) -> tuple[datetime, datetime]:
 
 @login_required
 def dashboard(request: HttpRequest) -> HttpResponse:
+    current_balance_date_param = request.GET.get("current_balance_date")  # Format: YYYY-MM-DD (jour unique)
+    try:
+        current_balance_date = (
+            datetime.strptime(current_balance_date_param, "%Y-%m-%d").date()
+            if current_balance_date_param
+            else timezone.now().date()
+        )
+    except ValueError:
+        current_balance_date = timezone.now().date()
+
     # Récupérer les paramètres de date
     month_param = request.GET.get("month")  # Format: YYYY-MM (sélection rapide par mois)
     start_date_param = request.GET.get("start_date")  # Format: YYYY-MM-DD (période personnalisée)
     end_date_param = request.GET.get("end_date")  # Format: YYYY-MM-DD (période personnalisée)
+
+    def _current_cycle_dates(today: date) -> tuple[date, date]:
+        """
+        Retourne la période courante basée sur la règle métier "du 24 au 24".
+        - Si on est le 24 ou après: période [24 du mois courant -> 24 du mois suivant]
+        - Sinon: période [24 du mois précédent -> 24 du mois courant]
+        """
+        if today.day >= 24:
+            start_d = today.replace(day=24)
+            end_d = (start_d + relativedelta(months=1)) + relativedelta(days=1)
+        else:
+            end_anchor = today.replace(day=24)
+            start_d = (end_anchor - relativedelta(months=1)).replace(day=24)
+            end_d = end_anchor + relativedelta(days=1)
+        return start_d, end_d
     
     # Priorité : si month est fourni, l'utiliser pour calculer la période (24 du mois précédent au 24 du mois)
     if month_param:
@@ -234,10 +252,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             start_date = (selected_date - relativedelta(months=1)).replace(day=24)
             end_date = selected_date.replace(day=24) + relativedelta(days=1)  # Inclure le 24
         except (ValueError, AttributeError):
-            # En cas d'erreur, utiliser le mois actuel
+            # En cas d'erreur, utiliser la période courante
             today = timezone.now().date()
-            start_date = (today.replace(day=1) - relativedelta(months=1)).replace(day=24)
-            end_date = today.replace(day=24) + relativedelta(days=1)
+            start_date, end_date = _current_cycle_dates(today)
     
     # Sinon, si start_date et end_date sont fournis, utiliser la période personnalisée
     elif start_date_param and end_date_param:
@@ -247,16 +264,14 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             # Ajouter 1 jour pour inclure la journée complète
             end_date = end_date + relativedelta(days=1)
         except ValueError:
-            # Par défaut : mois actuel (du 24 du mois dernier au 24 de ce mois)
+            # Par défaut : période courante
             today = timezone.now().date()
-            start_date = (today.replace(day=1) - relativedelta(months=1)).replace(day=24)
-            end_date = today.replace(day=24) + relativedelta(days=1)
+            start_date, end_date = _current_cycle_dates(today)
     
-    # Par défaut : mois actuel (du 24 du mois dernier au 24 de ce mois)
+    # Par défaut : période courante (cycle actuel)
     else:
         today = timezone.now().date()
-        start_date = (today.replace(day=1) - relativedelta(months=1)).replace(day=24)
-        end_date = today.replace(day=24) + relativedelta(days=1)
+        start_date, end_date = _current_cycle_dates(today)
     
     # Convertir en datetime aware
     start_dt = datetime.combine(start_date, datetime.min.time())
@@ -284,33 +299,48 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     expenses = abs(expenses_raw)
     
     # SOLDE COURANT (comptes chèques uniquement)
+    # Certains providers (ex: BoursoBank) n'enrichissent pas toujours account_balance
+    # sur chaque ligne; on applique donc la même logique que la vue Transactions:
+    # - utiliser account_balance quand il est fiable et présent
+    # - sinon recalculer avec le cumul des montants.
+    trusted_raw_balance_providers = {"boursobank", "boursorama"}
+
+    def _balance_as_of(account: Account, cutoff: datetime | None = None) -> float:
+        running_balance = float(account.initial_balance or 0)
+        tx_qs = Transaction.objects.filter(account=account)
+        if cutoff is not None:
+            tx_qs = tx_qs.filter(posted_at__lte=cutoff)
+        account_txs = tx_qs.order_by("posted_at", "id").only("id", "amount", "account_balance")
+        for tx in account_txs:
+            if (
+                account.provider in trusted_raw_balance_providers
+                and tx.account_balance is not None
+            ):
+                running_balance = float(tx.account_balance)
+            else:
+                running_balance += float(tx.amount)
+        return running_balance
+
     checking_accounts = Account.objects.filter(
-        owner=request.user, 
+        owner=request.user,
         type=Account.AccountType.CHECKING,
-        include_in_dashboard=True
+        include_in_dashboard=True,
     )
     checking_balance = 0
     checking_balance_at_start = 0
     checking_accounts_list = []
     
+    current_balance_cutoff = datetime.combine(current_balance_date, datetime.max.time())
+    if settings.USE_TZ:
+        current_balance_cutoff = timezone.make_aware(
+            current_balance_cutoff, timezone.get_current_timezone()
+        )
+
     for account in checking_accounts:
-        # Trouver la transaction la plus récente jusqu'à la date de fin
-        latest_tx = Transaction.objects.filter(
-            account=account,
-            posted_at__lte=end,
-            account_balance__isnull=False
-        ).order_by("-posted_at", "-account_balance", "-id").first()
-        
-        if latest_tx and latest_tx.account_balance is not None:
-            account_balance = float(latest_tx.account_balance)
-            checking_balance += account_balance
-        else:
-            account_initial = float(account.initial_balance or 0)
-            account_sum = Transaction.objects.filter(
-                account=account, posted_at__lte=end
-            ).aggregate(total=Sum("amount"))["total"] or 0
-            account_balance = account_initial + float(account_sum)
-            checking_balance += account_balance
+        # Solde courant: toujours prendre la transaction la plus récente (jusqu'à maintenant),
+        # indépendamment de la période affichée.
+        account_balance = _balance_as_of(account, current_balance_cutoff)
+        checking_balance += account_balance
         
         checking_accounts_list.append({
             "name": account.name,
@@ -319,26 +349,17 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         })
         
         # Solde au début de la période
-        latest_tx_before = Transaction.objects.filter(
-            account=account,
-            posted_at__lt=start,
-            account_balance__isnull=False
-        ).order_by("-posted_at", "-account_balance", "-id").first()
-        
-        if latest_tx_before and latest_tx_before.account_balance is not None:
-            checking_balance_at_start += float(latest_tx_before.account_balance)
-        else:
-            account_initial = float(account.initial_balance or 0)
-            account_sum_before = Transaction.objects.filter(
-                account=account, posted_at__lt=start
-            ).aggregate(total=Sum("amount"))["total"] or 0
-            checking_balance_at_start += account_initial + float(account_sum_before)
+        previous_day = current_balance_date - timedelta(days=1)
+        start_cutoff = datetime.combine(previous_day, datetime.max.time())
+        if settings.USE_TZ:
+            start_cutoff = timezone.make_aware(start_cutoff, timezone.get_current_timezone())
+        checking_balance_at_start += _balance_as_of(account, start_cutoff)
     
     # ÉPARGNE (livrets)
     savings_accounts = Account.objects.filter(
         owner=request.user,
         type=Account.AccountType.SAVINGS,
-        include_in_dashboard=True
+        include_in_dashboard=True,
     )
     savings_balance = 0
     savings_accounts_list = []
@@ -348,7 +369,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             account=account,
             posted_at__lte=end,
             account_balance__isnull=False
-        ).order_by("-posted_at", "-account_balance", "-id").first()
+        ).order_by("-posted_at", "-id").first()
         
         if latest_tx and latest_tx.account_balance is not None:
             account_balance = float(latest_tx.account_balance)
@@ -370,7 +391,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     # INVESTISSEMENTS (Trade Republic et comptes broker)
     investment_accounts = Account.objects.filter(
         owner=request.user,
-        include_in_dashboard=True
+        include_in_dashboard=True,
     ).filter(
         Q(provider="traderepublic") | Q(type=Account.AccountType.BROKER)
     )
@@ -828,6 +849,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "stats_expenses": float(stats_expenses),
         "balance": float(real_balance),  # Solde courant uniquement
         "period_balance": float(period_balance),
+        "current_balance_date": current_balance_date.strftime("%Y-%m-%d"),
         "stats_period_balance": float(stats_period_balance),
         "checking_balance": float(checking_balance),
         "savings_balance": float(savings_balance),
@@ -865,8 +887,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "projected_balance": float(projected_balance),
         "monthly_stats": monthly_stats,
         "start_date": start_date.strftime("%Y-%m-%d"),
-        "end_date": (end_date - relativedelta(days=1)).strftime("%Y-%m-%d"),  # Retirer le jour ajouté pour l'affichage
-        "selected_month": month_param,  # Pour le sélecteur de mois
+        "end_date": (end_date - relativedelta(days=1)).strftime("%Y-%m-%d"),
+        "selected_month": month_param,
         "is_custom_period": not month_param and (start_date_param and end_date_param),  # Indique si c'est une période personnalisée (False si month est fourni)
         "valuation_date_display": global_latest_valuation_date.strftime("%d/%m/%Y") if global_latest_valuation_date else (end_date - relativedelta(days=1)).strftime("%d/%m/%Y"),  # Date de valorisation pour l'affichage
         "history_chart": {
@@ -909,10 +931,10 @@ def transactions(request: HttpRequest) -> HttpResponse:
         except (ValueError, TypeError):
             pass  # Ignorer les valeurs invalides
     
-    # Trier par date (du plus récent au plus ancien) pour l'affichage
-    # Si les dates sont identiques, utiliser le solde brut (account_balance) pour déterminer l'ordre logique
-    # Les transactions avec un solde plus petit (arrivées avant) viennent en premier
-    txs_query = txs_query.order_by("-posted_at", "account_balance", "-id")
+    # Trier par date (du plus récent au plus ancien) pour l'affichage.
+    # On évite d'utiliser account_balance pour l'ordre global car certaines sources
+    # (ex: Trade Republic) peuvent fournir des soldes bruts non adaptés à cette vue.
+    txs_query = txs_query.order_by("-posted_at", "-id")
     
     # Pagination : 100 transactions par page
     paginator = Paginator(txs_query, 100)
@@ -923,201 +945,43 @@ def transactions(request: HttpRequest) -> HttpResponse:
     except:
         page = paginator.get_page(1)
     
-    # Pour calculer le solde, on doit récupérer toutes les transactions jusqu'à la première de la page
-    # On récupère les transactions dans l'ordre chronologique (du plus ancien au plus récent)
-    # jusqu'à la première transaction de la page actuelle
-    # IMPORTANT: Le solde est calculé par compte séparément - chaque compte a son propre solde
-    account_balances = {}  # Dictionnaire pour stocker le solde actuel de chaque compte (clé = account_id)
-    
-    # Pour la première page, initialiser le solde de chaque compte présent sur la page
-    if page.number == 1:
-        # Récupérer les IDs des comptes présents sur la page actuelle
-        accounts_on_page = set(tx.account_id for tx in page.object_list)
-        
-        # Initialiser le solde initial de chaque compte présent sur la page
-        for account_id_on_page in accounts_on_page:
-            account = Account.objects.get(id=account_id_on_page)
-            
-            # Partir de initial_balance ou 0
-            account_balances[account_id_on_page] = float(account.initial_balance or 0)
-            
-            # Calculer le solde pour toutes les transactions jusqu'à la première de la page
-            # Récupérer toutes les transactions de ce compte dans l'ordre chronologique jusqu'à la première de la page
-            first_tx_on_page = None
-            for tx in page.object_list:
-                if tx.account_id == account_id_on_page:
-                    if first_tx_on_page is None:
-                        first_tx_on_page = tx
-                    elif tx.posted_at < first_tx_on_page.posted_at or (
-                        tx.posted_at == first_tx_on_page.posted_at and (
-                            (tx.account_balance is not None and first_tx_on_page.account_balance is not None and tx.account_balance < first_tx_on_page.account_balance) or
-                            (tx.account_balance is None and first_tx_on_page.account_balance is not None) or
-                            (tx.account_balance == first_tx_on_page.account_balance and tx.id < first_tx_on_page.id) or
-                            (tx.account_balance is None and first_tx_on_page.account_balance is None and tx.id < first_tx_on_page.id)
-                        )
-                    ):
-                        first_tx_on_page = tx
-            
-            if first_tx_on_page:
-                # Récupérer toutes les transactions avant la première de la page
-                all_txs_before = Transaction.objects.filter(
-                    account_id=account_id_on_page,
-                    account__owner=request.user
-                ).order_by("posted_at", "account_balance", "id")
-                
-                for prev_tx in all_txs_before:
-                    if prev_tx.posted_at < first_tx_on_page.posted_at or (
-                        prev_tx.posted_at == first_tx_on_page.posted_at and (
-                            (prev_tx.account_balance is not None and first_tx_on_page.account_balance is not None and prev_tx.account_balance < first_tx_on_page.account_balance) or
-                            (prev_tx.account_balance is None and first_tx_on_page.account_balance is not None) or
-                            (prev_tx.account_balance == first_tx_on_page.account_balance and prev_tx.id < first_tx_on_page.id) or
-                            (prev_tx.account_balance is None and first_tx_on_page.account_balance is None and prev_tx.id < first_tx_on_page.id)
-                        )
-                    ):
-                        account_balances[account_id_on_page] += float(prev_tx.amount)
-    
-    # Si ce n'est pas la première page, calculer le solde jusqu'à la première transaction de la page
-    # IMPORTANT: Pour chaque compte, on doit compter uniquement les transactions de ce compte
-    # et non toutes les transactions (tous comptes confondus)
-    elif page.has_other_pages() and page.number > 1:
-        # Récupérer les IDs des comptes présents sur la page actuelle
-        accounts_on_page = set(tx.account_id for tx in page.object_list)
-        
-        # Pour chaque compte présent sur la page, calculer le solde initial
-        # en comptant uniquement les transactions de ce compte jusqu'à la première transaction de ce compte sur la page
-        for account_id_on_page in accounts_on_page:
-            # Récupérer toutes les transactions de ce compte dans l'ordre chronologique
-            # Si les dates sont identiques, utiliser le solde brut (account_balance) pour déterminer l'ordre logique
-            account_txs_query = Transaction.objects.filter(
-                account__owner=request.user,
-                account_id=account_id_on_page
-            ).order_by("posted_at", "account_balance", "id")
-            
-            # Trouver la première transaction de ce compte sur la page actuelle dans l'ordre chronologique
-            # (du plus ancien au plus récent, pas dans l'ordre d'affichage)
-            # Si les dates sont identiques, utiliser le solde brut (account_balance) pour déterminer l'ordre logique
-            first_tx_on_page_for_account = None
-            for tx in page.object_list:
-                if tx.account_id == account_id_on_page:
-                    if first_tx_on_page_for_account is None:
-                        first_tx_on_page_for_account = tx
-                    else:
-                        # Comparer par date, puis par solde brut, puis par ID
-                        tx_balance = tx.account_balance if tx.account_balance is not None else float('inf')
-                        first_balance = first_tx_on_page_for_account.account_balance if first_tx_on_page_for_account.account_balance is not None else float('inf')
-                        
-                        if tx.posted_at < first_tx_on_page_for_account.posted_at:
-                            first_tx_on_page_for_account = tx
-                        elif tx.posted_at == first_tx_on_page_for_account.posted_at:
-                            # Si les dates sont identiques, utiliser le solde brut (plus petit = arrivée avant)
-                            if tx_balance < first_balance or (
-                                tx_balance == first_balance and tx.id < first_tx_on_page_for_account.id
-                            ):
-                                first_tx_on_page_for_account = tx
-            
-            if first_tx_on_page_for_account:
-                # Compter toutes les transactions de ce compte jusqu'à (mais pas incluant) la première transaction de ce compte sur la page
-                # On récupère toutes les transactions de ce compte avec une date antérieure ou égale à la première transaction
-                # mais on exclut la première transaction elle-même
-                # Si les dates sont identiques, utiliser le solde brut (account_balance) pour déterminer l'ordre logique
-                first_balance = first_tx_on_page_for_account.account_balance
-                if first_balance is not None:
-                    # Si la première transaction a un solde brut, utiliser le solde brut dans la comparaison
-                    txs_before_for_account = account_txs_query.filter(
-                        Q(posted_at__lt=first_tx_on_page_for_account.posted_at) |
-                        Q(posted_at=first_tx_on_page_for_account.posted_at, account_balance__lt=first_balance) |
-                        Q(posted_at=first_tx_on_page_for_account.posted_at, account_balance=first_balance, id__lt=first_tx_on_page_for_account.id) |
-                        Q(posted_at=first_tx_on_page_for_account.posted_at, account_balance__isnull=True, id__lt=first_tx_on_page_for_account.id)
-                    )
-                else:
-                    # Si la première transaction n'a pas de solde brut, utiliser l'ID
-                    txs_before_for_account = account_txs_query.filter(
-                        Q(posted_at__lt=first_tx_on_page_for_account.posted_at) |
-                        Q(posted_at=first_tx_on_page_for_account.posted_at, id__lt=first_tx_on_page_for_account.id)
-                    )
-                
-                # Initialiser le solde du compte
-                account = Account.objects.get(id=account_id_on_page)
-                
-                # Pour Hello Bank et Trade Republic, calculer depuis le début (depuis la transaction la plus ancienne)
-                if account.provider in ("hellobank", "traderepublic"):
-                    # Partir de initial_balance ou 0
-                    account_balances[account_id_on_page] = float(account.initial_balance or 0)
-                    
-                    # Calculer le solde pour toutes les transactions jusqu'à la première de la page
-                    for tx in txs_before_for_account:
-                        account_balances[account_id_on_page] += float(tx.amount)
-                else:
-                    # Pour les autres comptes, utiliser initial_balance
-                    account_balances[account_id_on_page] = float(account.initial_balance or 0)
-                    
-                    # Calculer le solde pour ce compte uniquement
-                    for tx in txs_before_for_account:
-                        account_balances[account_id_on_page] += float(tx.amount)
-    
-    # Récupérer les transactions de la page dans l'ordre chronologique pour calculer le solde
-    # On ne peut pas réordonner page.object_list car c'est déjà une slice
-    # On récupère donc les IDs des transactions de la page, puis on les récupère dans l'ordre chronologique
-    # Si les dates sont identiques, utiliser le solde brut (account_balance) pour déterminer l'ordre logique
-    page_tx_ids = [tx.id for tx in page.object_list]
-    page_txs_chronological = Transaction.objects.filter(
-        id__in=page_tx_ids
-    ).select_related("account", "category").order_by("posted_at", "account_balance", "id")
-    
-    # Calculer le solde après chaque transaction de la page
-    # IMPORTANT: Chaque transaction affiche le solde de son propre compte uniquement
-    # On ne mélange pas les soldes de différents comptes (ex: Trade Republic + BoursoBank)
-    # Si la transaction a un account_balance (solde brut du CSV), on l'utilise directement
-    # Sinon, on calcule le solde en ajoutant le montant de la transaction
+    # Calcul du solde "après transaction" par compte, avec ordre chronologique stable.
+    # On n'utilise account_balance brut que pour des providers où ce champ est fiable.
+    trusted_raw_balance_providers = {"boursobank", "boursorama"}
+    page_tx_ids = {tx.id for tx in page.object_list}
+    accounts_on_page = {tx.account_id for tx in page.object_list}
+    balance_after_by_tx_id: dict[int, float] = {}
+
+    for account_obj in accounts.filter(id__in=accounts_on_page):
+        running_balance = float(account_obj.initial_balance or 0)
+        account_txs = (
+            Transaction.objects.filter(account_id=account_obj.id, account__owner=request.user)
+            .order_by("posted_at", "id")
+            .only("id", "amount", "account_balance")
+        )
+
+        for tx in account_txs:
+            if (
+                account_obj.provider in trusted_raw_balance_providers
+                and tx.account_balance is not None
+            ):
+                running_balance = float(tx.account_balance)
+            else:
+                running_balance += float(tx.amount)
+
+            if tx.id in page_tx_ids:
+                balance_after_by_tx_id[tx.id] = running_balance
+
+    # Restituer dans l'ordre d'affichage (plus récent -> plus ancien)
     transactions_with_balance = []
-    for tx in page_txs_chronological:
-        tx_account_id = tx.account_id
-        
-        # Si la transaction a un solde brut du CSV, l'utiliser directement
-        if tx.account_balance is not None:
-            balance_after = float(tx.account_balance)
-        else:
-            # Sinon, calculer le solde en ajoutant le montant de la transaction
-            # Initialiser le solde du compte si c'est la première transaction de ce compte
-            if tx_account_id not in account_balances:
-                account = tx.account
-                
-                # Pour Hello Bank et Trade Republic, calculer depuis le début (depuis la transaction la plus ancienne)
-                if account.provider in ("hellobank", "traderepublic"):
-                    # Partir de initial_balance ou 0
-                    account_balances[tx_account_id] = float(account.initial_balance or 0)
-                    
-                    # Calculer le solde pour toutes les transactions jusqu'à celle-ci
-                    all_txs_before = Transaction.objects.filter(
-                        account_id=tx_account_id,
-                        account__owner=request.user
-                    ).order_by("posted_at", "account_balance", "id")
-                    
-                    for prev_tx in all_txs_before:
-                        if prev_tx.posted_at < tx.posted_at or (
-                            prev_tx.posted_at == tx.posted_at and (
-                                (prev_tx.account_balance is not None and tx.account_balance is not None and prev_tx.account_balance < tx.account_balance) or
-                                (prev_tx.account_balance is None and tx.account_balance is not None) or
-                                (prev_tx.account_balance == tx.account_balance and prev_tx.id < tx.id) or
-                                (prev_tx.account_balance is None and tx.account_balance is None and prev_tx.id < tx.id)
-                            )
-                        ):
-                            account_balances[tx_account_id] += float(prev_tx.amount)
-                else:
-                    # Pour les autres comptes, utiliser initial_balance
-                    account_balances[tx_account_id] = float(account.initial_balance or 0)
-            
-            # Calculer le solde après cette transaction pour ce compte uniquement
-            account_balances[tx_account_id] += float(tx.amount)
-            balance_after = account_balances[tx_account_id]
-        
-        transactions_with_balance.append({
-            "transaction": tx,
-            "balance_after": balance_after,
-        })
-    
-    # Inverser l'ordre pour afficher les plus récentes en premier
-    transactions_with_balance.reverse()
+    for tx in page.object_list:
+        fallback = float((tx.account.initial_balance or 0) + tx.amount)
+        transactions_with_balance.append(
+            {
+                "transaction": tx,
+                "balance_after": balance_after_by_tx_id.get(tx.id, fallback),
+            }
+        )
     
     # Convertir l'ID du compte sélectionné en entier pour la comparaison dans le template
     selected_account_id_int = None
@@ -1176,65 +1040,7 @@ def accounts(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def settings_view(request: HttpRequest) -> HttpResponse:
-    if request.method == "POST":
-        # Gérer l'upload de fichier CSV
-        csv_file = request.FILES.get("csv_file")
-        account_name = request.POST.get("account_name", "").strip()
-        profile = request.POST.get("profile", "generic").strip()
-        account_type = request.POST.get("account_type", Account.AccountType.CHECKING)
-        
-        if not csv_file:
-            messages.error(request, "Veuillez sélectionner un fichier CSV.")
-        elif not account_name:
-            messages.error(request, "Veuillez spécifier un nom de compte.")
-        else:
-            try:
-                # Sauvegarder temporairement le fichier
-                with NamedTemporaryFile(delete=False, suffix=".csv") as tmp_file:
-                    for chunk in csv_file.chunks():
-                        tmp_file.write(chunk)
-                    tmp_path = tmp_file.name
-                
-                try:
-                    # Importer selon le profil
-                    if profile == "traderepublic":
-                        from .importers.loader import import_traderepublic_from_csv
-                        count = import_traderepublic_from_csv(
-                            user=request.user,
-                            csv_path=tmp_path,
-                            account_name=account_name,
-                            currency="EUR",
-                        )
-                    else:
-                        from .importers.loader import import_bank_statement_from_csv
-                        count = import_bank_statement_from_csv(
-                            user=request.user,
-                            csv_path=tmp_path,
-                            account_name=account_name,
-                            profile=profile,
-                            account_type=account_type,
-                        )
-                    
-                    messages.success(request, f"Import réussi : {count} transaction(s) importée(s) pour le compte '{account_name}'.")
-                    return redirect("settings")
-                finally:
-                    # Nettoyer le fichier temporaire
-                    import os
-                    if os.path.exists(tmp_path):
-                        os.unlink(tmp_path)
-            
-            except Exception as e:
-                messages.error(request, f"Erreur lors de l'import : {str(e)}")
-    
-    # Récupérer les comptes d'investissement pour l'import PDF
-    investment_accounts_list = Account.objects.filter(
-        owner=request.user,
-        type=Account.AccountType.BROKER
-    ).order_by('name')
-    
-    return render(request, "finance/settings.html", {
-        "investment_accounts_list": investment_accounts_list,
-    })
+    return render(request, "finance/settings.html")
 
 
 @login_required
@@ -1269,51 +1075,6 @@ def transaction_create(request: HttpRequest) -> HttpResponse:
         form = TransactionForm()
         form.fields["account"].queryset = Account.objects.filter(owner=request.user)
     return render(request, "finance/transaction_form.html", {"form": form, "title": "Nouvelle transaction"})
-
-
-@login_required
-def import_upload(request: HttpRequest) -> HttpResponse:
-    if request.method == "POST":
-        form = ImportStatementForm(request.POST, request.FILES)
-        if form.is_valid():
-            import_type = form.cleaned_data["import_type"]
-            account_name = form.cleaned_data["account_name"]
-            currency = form.cleaned_data.get("currency") or "EUR"
-            uploaded: UploadedFile = form.cleaned_data["file"]
-
-            tmp_path = None
-            try:
-                with NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-                    for chunk in uploaded.chunks():
-                        tmp.write(chunk)
-                    tmp_path = tmp.name
-
-                if import_type == "traderepublic":
-                    count = import_traderepublic_from_csv(
-                        user=request.user,
-                        csv_path=tmp_path,
-                        account_name=account_name,
-                        currency=currency,
-                    )
-                else:
-                    profile = import_type
-                    count = import_bank_statement_from_csv(
-                        user=request.user,
-                        csv_path=tmp_path,
-                        account_name=account_name,
-                        profile=profile,
-                        account_type=Account.AccountType.CHECKING,
-                    )
-                messages.success(request, f"Import terminé: {count} lignes traitées.")
-                return redirect("transactions")
-            except Exception as exc:
-                messages.error(request, f"Import impossible: {exc}")
-            finally:
-                if tmp_path and os.path.exists(tmp_path):
-                    os.unlink(tmp_path)
-    else:
-        form = ImportStatementForm()
-    return render(request, "finance/import_form.html", {"form": form})
 
 
 @login_required
@@ -1555,401 +1316,6 @@ def reset_user_finance(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
-def traderepublic_import(request: HttpRequest) -> HttpResponse:
-    """Vue pour afficher le formulaire d'import Trade Republic."""
-    return render(request, "finance/traderepublic_import.html")
-
-
-def _resolve_tr_credentials_for_user_account(user, account_id: int | None) -> tuple[str, str] | None:
-    if not account_id:
-        return None
-    try:
-        account = Account.objects.select_related("bank_connection").get(
-            id=account_id,
-            owner=user,
-            provider="traderepublic",
-        )
-    except Account.DoesNotExist:
-        return None
-
-    connection = account.bank_connection
-    if not connection or not connection.encrypted_credentials:
-        return None
-    try:
-        credentials = EncryptionService.decrypt_credentials(connection.encrypted_credentials)
-    except EncryptionError:
-        return None
-
-    phone = (credentials.get("phone_number") or credentials.get("username") or "").strip()
-    pin = (credentials.get("pin") or credentials.get("password") or "").strip()
-    if phone and pin:
-        return phone, pin
-    return None
-
-
-def _extract_retry_after_seconds(error_text: str) -> int | None:
-    match = re.search(r"nextAttemptInSeconds['\"]?\s*:\s*(\d+)", error_text or "")
-    if not match:
-        return None
-    try:
-        return int(match.group(1))
-    except (TypeError, ValueError):
-        return None
-
-
-@login_required
-def traderepublic_initiate_login(request: HttpRequest) -> JsonResponse:
-    """Initie la connexion Trade Republic et retourne le process_id."""
-    if request.method != "POST":
-        return JsonResponse({"error": "Méthode non autorisée"}, status=405)
-    
-    try:
-        logger = logging.getLogger(__name__)
-        raw_body = (request.body or b"").decode("utf-8", errors="replace")
-        try:
-            data = json.loads(request.body or b"{}")
-        except json.JSONDecodeError:
-            return JsonResponse({"error": "Requête JSON invalide ou vide."}, status=400)
-        safe_data = dict(data) if isinstance(data, dict) else {"_invalid_payload_type": type(data).__name__}
-        if "pin" in safe_data:
-            safe_data["pin"] = "***"
-        logger.info("TR initiate request json=%s", safe_data)
-        phone_number = data.get("phone_number")
-        pin = data.get("pin")
-        account_id = data.get("account_id")
-        account_name = data.get("account_name", "Trade Republic")
-        currency = data.get("currency", "EUR")
-
-        if (not phone_number or not pin) and account_id:
-            resolved = _resolve_tr_credentials_for_user_account(request.user, int(account_id))
-            if resolved:
-                phone_number, pin = resolved
-
-        if not phone_number or not pin:
-            return JsonResponse({"error": "Numéro de téléphone et PIN requis"}, status=400)
-        
-        scraper = TradeRepublicScraper(phone_number, pin)
-        try:
-            login_info = scraper.initiate_login()
-        except ValueError as exc:
-            error_text = str(exc)
-            if "TOO_MANY_REQUESTS" in error_text or "429" in error_text:
-                retry_after_seconds = _extract_retry_after_seconds(error_text)
-                existing_process_id = request.session.get("traderepublic_process_id")
-                existing_scraper = request.session.get("traderepublic_scraper")
-                if existing_process_id and existing_scraper:
-                    return JsonResponse(
-                        {
-                            "success": True,
-                            "process_id": existing_process_id,
-                            "countdown": retry_after_seconds or 0,
-                            "reused_pending_2fa": True,
-                            "message": "Challenge 2FA déjà en cours.",
-                        }
-                    )
-                return JsonResponse(
-                    {
-                        "error": "Trade Republic limite temporairement les demandes de code 2FA.",
-                        "retry_after_seconds": retry_after_seconds,
-                    },
-                    status=429,
-                )
-            raise
-        
-        # Stocker les informations dans la session (numéro normalisé E.164 pour les étapes suivantes)
-        request.session["traderepublic_phone"] = scraper.phone_number
-        request.session["traderepublic_pin"] = pin
-        request.session["traderepublic_account_name"] = account_name
-        request.session["traderepublic_currency"] = currency
-        request.session["traderepublic_process_id"] = login_info["process_id"]
-        request.session["traderepublic_scraper"] = {
-            "phone_number": scraper.phone_number,
-            "pin": pin,
-        }
-        request.session["traderepublic_api_cookies"] = scraper.export_api_cookies_for_session()
-        request.session["traderepublic_waf_token"] = getattr(scraper, "_waf_token", "") or ""
-        request.session["traderepublic_device_info"] = getattr(scraper, "_device_info", "") or ""
-        
-        return JsonResponse({
-            "success": True,
-            "process_id": login_info["process_id"],
-            "countdown": login_info["countdown"],
-        })
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=400)
-
-
-@login_required
-def traderepublic_resend_2fa(request: HttpRequest) -> JsonResponse:
-    """Renvoyer le code 2FA par SMS."""
-    if request.method != "POST":
-        return JsonResponse({"error": "Méthode non autorisée"}, status=405)
-    
-    try:
-        scraper_info = request.session.get("traderepublic_scraper")
-        if not scraper_info:
-            return JsonResponse({"error": "Session expirée. Réessayez."}, status=400)
-        
-        api_cookies = request.session.get("traderepublic_api_cookies")
-        scraper = TradeRepublicScraper(
-            scraper_info["phone_number"],
-            scraper_info["pin"],
-            api_cookies=api_cookies,
-            waf_token=request.session.get("traderepublic_waf_token") or "",
-            device_info=request.session.get("traderepublic_device_info") or "",
-        )
-        scraper.process_id = request.session.get("traderepublic_process_id")
-        scraper.resend_2fa()
-        request.session["traderepublic_api_cookies"] = scraper.export_api_cookies_for_session()
-        request.session["traderepublic_waf_token"] = getattr(scraper, "_waf_token", "") or ""
-        request.session["traderepublic_device_info"] = getattr(scraper, "_device_info", "") or ""
-
-        return JsonResponse({"success": True, "message": "Code 2FA renvoyé par SMS"})
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=400)
-
-
-@login_required
-def traderepublic_verify_for_bridge(request: HttpRequest) -> JsonResponse:
-    """Vérifie le code 2FA pour le bridge, sans lancer d'import CSV."""
-    if request.method != "POST":
-        return JsonResponse({"error": "Méthode non autorisée"}, status=405)
-
-    try:
-        data = json.loads(request.body)
-        code = (data.get("code") or "").strip()
-        if not code:
-            return JsonResponse({"error": "Code 2FA requis"}, status=400)
-
-        scraper_info = request.session.get("traderepublic_scraper")
-        process_id = request.session.get("traderepublic_process_id")
-        if not scraper_info or not process_id:
-            return JsonResponse({"error": "Session 2FA expirée. Relancez la synchronisation."}, status=400)
-
-        scraper = TradeRepublicScraper(
-            scraper_info["phone_number"],
-            scraper_info["pin"],
-            api_cookies=request.session.get("traderepublic_api_cookies"),
-            waf_token=request.session.get("traderepublic_waf_token") or "",
-            device_info=request.session.get("traderepublic_device_info") or "",
-        )
-        scraper.process_id = process_id
-        scraper.verify_2fa(code)
-        request.session["traderepublic_api_cookies"] = scraper.export_api_cookies_for_session()
-        request.session["traderepublic_waf_token"] = getattr(scraper, "_waf_token", "") or ""
-        request.session["traderepublic_device_info"] = getattr(scraper, "_device_info", "") or ""
-        request.session.pop("traderepublic_process_id", None)
-
-        return JsonResponse({"success": True, "message": "Code 2FA validé. Relance de sync possible."})
-    except ValueError as e:
-        return JsonResponse({"error": str(e)}, status=400)
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Données JSON invalides"}, status=400)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
-
-
-@login_required
-def traderepublic_verify_and_scrape(request: HttpRequest) -> JsonResponse:
-    """Vérifie le code 2FA et lance le scraping."""
-    if request.method != "POST":
-        return JsonResponse({"error": "Méthode non autorisée"}, status=405)
-    
-    try:
-        data = json.loads(request.body)
-        code = data.get("code", "").strip()
-        extract_details = True
-        logger = logging.getLogger(__name__)
-        logger.info(
-            "TR verify: force extract_details=True for richer valuation fields"
-        )
-        
-        if not code:
-            return JsonResponse({"error": "Code 2FA requis"}, status=400)
-        
-        scraper_info = request.session.get("traderepublic_scraper")
-        if not scraper_info:
-            return JsonResponse({"error": "Session expirée. Réessayez."}, status=400)
-        
-        process_id = request.session.get("traderepublic_process_id")
-        if not process_id:
-            return JsonResponse({"error": "Process ID manquant. Réessayez la connexion."}, status=400)
-        
-        api_cookies = request.session.get("traderepublic_api_cookies")
-        scraper = TradeRepublicScraper(
-            scraper_info["phone_number"],
-            scraper_info["pin"],
-            api_cookies=api_cookies,
-            waf_token=request.session.get("traderepublic_waf_token") or "",
-            device_info=request.session.get("traderepublic_device_info") or "",
-        )
-        scraper.process_id = process_id
-        
-        # Vérifier le code 2FA
-        token = scraper.verify_2fa(code)
-        request.session["traderepublic_api_cookies"] = scraper.export_api_cookies_for_session()
-        request.session["traderepublic_waf_token"] = getattr(scraper, "_waf_token", "") or ""
-        request.session["traderepublic_device_info"] = getattr(scraper, "_device_info", "") or ""
-        
-        # Créer un fichier temporaire pour le CSV
-        with NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as tmp:
-            tmp_path = tmp.name
-        
-        try:
-            # Scraper les transactions
-            scraper.scrape_and_save(token, Path(tmp_path), extract_details)
-            
-            # Importer le CSV généré
-            account_name = request.session.get("traderepublic_account_name", "Trade Republic")
-            currency = request.session.get("traderepublic_currency", "EUR")
-            
-            count = import_traderepublic_from_csv(
-                user=request.user,
-                csv_path=tmp_path,
-                account_name=account_name,
-                currency=currency,
-            )
-            
-            # Récupérer les liquidités disponibles et les stocker dans le compte
-            try:
-                cash_data = scraper.get_available_cash(token)
-                if cash_data:
-                    # Chercher le compte Trade Republic
-                    account = Account.objects.filter(
-                        owner=request.user,
-                        name=account_name,
-                        provider="traderepublic"
-                    ).first()
-                    
-                    if account:
-                        # Extraire le montant des liquidités
-                        from decimal import Decimal
-                        cash_amount = None
-                        
-                        # Fonction récursive pour chercher un montant dans les données
-                        def find_amount(data, keys_to_try):
-                            if isinstance(data, dict):
-                                for key in keys_to_try:
-                                    if key in data:
-                                        value = data[key]
-                                        if isinstance(value, (int, float)):
-                                            return Decimal(str(value))
-                                        elif isinstance(value, str):
-                                            try:
-                                                return Decimal(value.replace(",", "."))
-                                            except:
-                                                pass
-                                # Chercher récursivement dans les valeurs dict
-                                for value in data.values():
-                                    result = find_amount(value, keys_to_try)
-                                    if result is not None:
-                                        return result
-                            elif isinstance(data, list) and len(data) > 0:
-                                # Chercher dans le premier élément de la liste
-                                return find_amount(data[0], keys_to_try)
-                            return None
-                        
-                        # Chercher le montant dans différentes structures possibles
-                        keys_to_try = ["value", "amount", "availableCash", "cash", "balance", "available"]
-                        cash_amount = find_amount(cash_data, keys_to_try)
-                        
-                        # Pour Trade Republic, on importe TOUT l'historique depuis le début
-                        # donc initial_balance doit être à 0, pas aux liquidités actuelles
-                        if cash_amount is not None:
-                            account.initial_balance = Decimal("0")  # ✓ Zéro car on importe tout
-                            account.balance_snapshot_date = timezone.now().date()
-                            account.save(update_fields=["initial_balance", "balance_snapshot_date"])
-            except Exception as cash_error:
-                # Ne pas bloquer l'import si la récupération des liquidités échoue
-                logger.warning(f"Erreur lors de la récupération des liquidités Trade Republic: {cash_error}")
-            
-            # Récupérer le portefeuille (CTO/PEA) et stocker le montant total
-            try:
-                portfolio_data = scraper.get_portfolio(token)
-                if portfolio_data:
-                    # Chercher le compte Trade Republic
-                    account = Account.objects.filter(
-                        owner=request.user,
-                        name=account_name,
-                        provider="traderepublic"
-                    ).first()
-                    
-                    if account:
-                        # Extraire le montant du portefeuille (CTO/PEA)
-                        from decimal import Decimal
-                        portfolio_amount = None
-                        
-                        # Fonction récursive pour chercher un montant dans les données
-                        def find_amount(data, keys_to_try):
-                            if isinstance(data, dict):
-                                for key in keys_to_try:
-                                    if key in data:
-                                        value = data[key]
-                                        if isinstance(value, (int, float)):
-                                            return Decimal(str(value))
-                                        elif isinstance(value, str):
-                                            try:
-                                                return Decimal(value.replace(",", "."))
-                                            except:
-                                                pass
-                                # Chercher récursivement dans les valeurs dict
-                                for value in data.values():
-                                    result = find_amount(value, keys_to_try)
-                                    if result is not None:
-                                        return result
-                            elif isinstance(data, list) and len(data) > 0:
-                                # Chercher dans le premier élément de la liste
-                                return find_amount(data[0], keys_to_try)
-                            return None
-                        
-                        # Chercher le montant du portefeuille dans différentes structures possibles
-                        # On cherche des clés comme "totalValue", "portfolioValue", "balance", etc.
-                        keys_to_try = [
-                            "totalValue", "portfolioValue", "total", "value", 
-                            "balance", "amount", "equity", "netValue",
-                            "total.value", "portfolio.value", "balance.value"
-                        ]
-                        portfolio_amount = find_amount(portfolio_data, keys_to_try)
-                        
-                        # Pour Trade Republic, on importe TOUT l'historique depuis le début
-                        # donc initial_balance doit rester à 0, même si on récupère la valorisation actuelle
-                        # La valorisation actuelle sera calculée depuis les transactions importées
-                        if portfolio_amount is not None:
-                            # On ne modifie PAS l'initial_balance ici
-                            # Il reste à 0 car on importe tout l'historique
-                            # La valorisation du portefeuille sera calculée depuis les transactions
-                            pass
-            except Exception as portfolio_error:
-                # Ne pas bloquer l'import si la récupération du portefeuille échoue
-                logger.warning(f"Erreur lors de la récupération du portefeuille Trade Republic: {portfolio_error}")
-            
-            # Nettoyer la session
-            for key in ["traderepublic_phone", "traderepublic_pin", "traderepublic_account_name",
-                        "traderepublic_currency", "traderepublic_process_id", "traderepublic_scraper",
-                        "traderepublic_api_cookies", "traderepublic_waf_token", "traderepublic_device_info"]:
-                request.session.pop(key, None)
-            
-            return JsonResponse({
-                "success": True,
-                "message": f"Import terminé: {count} transactions importées.",
-                "count": count,
-            })
-        finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-    except ValueError as e:
-        return JsonResponse({"error": str(e)}, status=400)
-    except json.JSONDecodeError:
-        return JsonResponse({"error": "Données JSON invalides"}, status=400)
-    except Exception as e:
-        import traceback
-        error_msg = str(e)
-        if settings.DEBUG:
-            error_msg += f"\n{traceback.format_exc()}"
-        return JsonResponse({"error": error_msg}, status=500)
-
-
-@login_required
 def update_investment_valuation(request: HttpRequest) -> HttpResponse:
     """Met à jour la valorisation d'un compte d'investissement."""
     if request.method != "POST":
@@ -2121,411 +1487,6 @@ def update_transaction_category(request: HttpRequest, transaction_id: int) -> Js
         return JsonResponse({"error": error_msg}, status=500)
 
 
-@login_required
-def import_traderepublic_pdf(request: HttpRequest) -> JsonResponse:
-    """
-    Import et analyse d'un PDF Trade Republic pour mettre à jour la valorisation
-    et la composition du portefeuille en utilisant l'API OpenAI
-    """
-    if request.method != "POST":
-        return JsonResponse({"error": "Méthode non autorisée"}, status=405)
-    
-    if "pdf_file" not in request.FILES:
-        return JsonResponse({"error": "Aucun fichier PDF fourni"}, status=400)
-    
-    if "account_id" not in request.POST:
-        return JsonResponse({"error": "Aucun compte sélectionné"}, status=400)
-    
-    if "portfolio_type" not in request.POST:
-        return JsonResponse({"error": "Aucun type de portefeuille sélectionné"}, status=400)
-    
-    try:
-        # Récupérer le compte et le type de portefeuille
-        account_id = int(request.POST["account_id"])
-        portfolio_type = request.POST["portfolio_type"]
-        account = Account.objects.get(id=account_id, owner=request.user, type=Account.AccountType.BROKER)
-        
-        # Récupérer le fichier PDF
-        pdf_file = request.FILES["pdf_file"]
-        
-        # Extraire le texte du PDF
-        pdf_text = extract_text_from_pdf(pdf_file)
-        
-        # Analyser avec OpenAI
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            return JsonResponse({"error": "Clé API OpenAI non configurée"}, status=500)
-        
-        openai.api_key = openai_api_key
-        
-        # Créer le prompt pour OpenAI
-        # Mapper le portfolio_type au format utilisé dans les PDFs Trade Republic
-        tax_wrapper_map = {
-            "cto": "CTO",
-            "pea": "PEA",
-            "pea_pme": "PEA-PME",
-            "crypto": "CRYPTO",
-            "other": "",
-            "all": "ALL"
-        }
-        tax_wrapper = tax_wrapper_map.get(portfolio_type, "")
-        
-        # Adapter le prompt selon si on veut tout ou un seul portefeuille
-        if portfolio_type == "all":
-            prompt = f"""
-Analyse ce document PDF de Trade Republic et extrait les informations suivantes au format JSON.
-
-IMPORTANT: 
-- Ce document contient PLUSIEURS portefeuilles (CTO, PEA, CRYPTO, etc.)
-- Extrais TOUS les portefeuilles avec leurs titres/actifs respectifs
-- Groupe les actifs par portefeuille (CTO, PEA, PEA-PME, CRYPTO)
-- Calcule la valorisation pour CHAQUE portefeuille séparément
-
-⚠️ DATE DU DOCUMENT :
-- **NE PAS** utiliser la date en en-tête du document (c'est la date d'impression)
-- **CHERCHER** la date après "jusqu'au" (ex: "jusqu'au 08/11/2025")
-- Cette date est la VRAIE date de valorisation du portefeuille
-- Format attendu : DD/MM/YYYY
-
-STRUCTURE DU PDF TRADE REPUBLIC :
-Pour chaque titre, la structure exacte est :
-1. Quantité de titres (ex: "5,048182 titre(s)")
-2. Nom du titre et ISIN (**CODE DE 12 CARACTÈRES** à IGNORER, ex: "FR0000120578")
-3. **COURS PAR TITRE** = prix unitaire (ex: "86,06")
-4. **Date de valorisation** (ex: "08/11/2025") ← **UTILISER CETTE DATE**
-5. **COURS EN EUR** = valeur totale (ex: "434,45")
-
-📌 FORMAT ISIN : **TOUJOURS 12 caractères** (2 lettres + 10 chiffres/lettres)
-   - Exemples : FR0000120578, DE0005190003, US88160R1014
-   - L'ISIN peut être collé aux chiffres : "DE00070300091746,50" = ISIN(12 chars) + prix(1746,50)
-
-⚠️ RÈGLES CRITIQUES :
-1. **L'ISIN fait TOUJOURS 12 caractères** - Identifie-le et ignore ces 12 caractères complètement
-2. Le **prix_unitaire** est le DERNIER nombre AVANT la date (format DD/MM/YYYY)
-3. La **valeur_totale** est le PREMIER nombre APRÈS la date
-4. **VALIDATION OBLIGATOIRE** : Tu DOIS vérifier que valeur_totale ≈ quantité × prix_unitaire
-   - Si l'écart est > 2%, tu as fait une ERREUR, cherche le bon prix !
-
-🔍 MÉTHODE DE DÉTECTION DU PRIX :
-1. Cherche la date (format "08/11/2025")
-2. Le nombre JUSTE AVANT la date = prix_unitaire
-3. Le nombre JUSTE APRÈS la date = valeur_totale
-4. VÉRIFIE : quantité × prix_unitaire ≈ valeur_totale
-
-📊 EXEMPLES CONCRETS AVEC VALIDATION :
-- "3,114876 titre(s) BMW ISIN:DE000519000386,22 08/11/2025268,56"
-  → ISIN = DE0005190003 (12 caractères) à ignorer
-  → Après ISIN: 86,22 (prix) | Date: 08/11/2025 | Après date: 268,56 (valeur)
-  → Vérif: 3.114876 × 86.22 = 268.56 ✓
-  → prix_unitaire=86.22, valeur_totale=268.56
-
-- "0,172485 titre(s) Rheinmetall ISIN:DE00070300091746,50 08/11/2025301,25"
-  → ISIN = DE0007030009 (12 caractères) à ignorer
-  → Après ISIN: 1746,50 (prix) | Date: 08/11/2025 | Après date: 301,25 (valeur)
-  → Vérif: 0.172485 × 1746.50 = 301.25 ✓
-  → prix_unitaire=1746.50, valeur_totale=301.25
-
-- "5,048182 titre(s) Sanofi ISIN:FR000012057886,06 08/11/2025434,45"
-  → ISIN = FR0000120578 (12 caractères) à ignorer
-  → Après ISIN: 86,06 (prix) | Date: 08/11/2025 | Après date: 434,45 (valeur)
-  → Vérif: 5.048182 × 86.06 = 434.45 ✓
-  → prix_unitaire=86.06, valeur_totale=434.45
-
-Format JSON attendu :
-{{
-  "date": "<date du document au format YYYY-MM-DD>",
-  "portefeuilles": [
-    {{
-      "type": "<CTO|PEA|PEA-PME|CRYPTO>",
-      "valorisation": <montant total en euros pour ce portefeuille>,
-      "titres": [
-        {{
-          "symbole": "<code ISIN ou ticker (pour crypto: symbole comme BTC, ETH)>",
-          "nom": "<nom du titre ou de la crypto>",
-          "quantite": <nombre d'actions/parts/unités>,
-          "prix_unitaire": <COURS PAR TITRE en euros>,
-          "valeur_totale": <COURS EN EUR = quantité × prix_unitaire>,
-          "type": "<action|etf|obligation|crypto>"
-        }}
-      ]
-    }}
-  ]
-}}
-
-Texte du document :
-""" + pdf_text[:50000]
-        else:
-            prompt = f"""
-Analyse ce document PDF de Trade Republic et extrait les informations suivantes au format JSON.
-
-IMPORTANT: 
-- Ce document peut contenir PLUSIEURS portefeuilles (CTO, PEA, PEA-PME, CRYPTO)
-- Extrais UNIQUEMENT les actifs du portefeuille "{tax_wrapper}"
-- Cherche dans tout le document les sections qui mentionnent "{tax_wrapper}"
-- La valorisation doit être celle du portefeuille "{tax_wrapper}" uniquement, PAS la valorisation totale
-
-⚠️ DATE DU DOCUMENT :
-- **NE PAS** utiliser la date en en-tête du document (c'est la date d'impression)
-- **CHERCHER** la date après "jusqu'au" (ex: "jusqu'au 08/11/2025")
-- Cette date est la VRAIE date de valorisation du portefeuille
-- Format attendu : DD/MM/YYYY
-
-STRUCTURE DU PDF TRADE REPUBLIC :
-Pour chaque titre, la structure exacte est :
-1. Quantité de titres (ex: "5,048182 titre(s)")
-2. Nom du titre et ISIN (**CODE DE 12 CARACTÈRES** à IGNORER, ex: "FR0000120578")
-3. **COURS PAR TITRE** = prix unitaire (ex: "86,06")
-4. **Date de valorisation** (ex: "08/11/2025") ← **UTILISER CETTE DATE**
-5. **COURS EN EUR** = valeur totale (ex: "434,45")
-
-📌 FORMAT ISIN : **TOUJOURS 12 caractères** (2 lettres + 10 chiffres/lettres)
-   - Exemples : FR0000120578, DE0005190003, US88160R1014
-   - L'ISIN peut être collé aux chiffres : "DE00070300091746,50" = ISIN(12 chars) + prix(1746,50)
-
-⚠️ RÈGLES CRITIQUES :
-1. **L'ISIN fait TOUJOURS 12 caractères** - Identifie-le et ignore ces 12 caractères complètement
-2. Le **prix_unitaire** est le DERNIER nombre AVANT la date (format DD/MM/YYYY)
-3. La **valeur_totale** est le PREMIER nombre APRÈS la date
-4. **VALIDATION OBLIGATOIRE** : Tu DOIS vérifier que valeur_totale ≈ quantité × prix_unitaire
-   - Si l'écart est > 2%, tu as fait une ERREUR, cherche le bon prix !
-
-🔍 MÉTHODE DE DÉTECTION DU PRIX :
-1. Cherche la date (format "08/11/2025")
-2. Le nombre JUSTE AVANT la date = prix_unitaire
-3. Le nombre JUSTE APRÈS la date = valeur_totale
-4. VÉRIFIE : quantité × prix_unitaire ≈ valeur_totale
-
-📊 EXEMPLES CONCRETS AVEC VALIDATION :
-- "3,114876 titre(s) BMW ISIN:DE000519000386,22 08/11/2025268,56"
-  → ISIN = DE0005190003 (12 caractères) à ignorer
-  → Après ISIN: 86,22 (prix) | Date: 08/11/2025 | Après date: 268,56 (valeur)
-  → Vérif: 3.114876 × 86.22 = 268.56 ✓
-  → prix_unitaire=86.22, valeur_totale=268.56
-
-- "0,172485 titre(s) Rheinmetall ISIN:DE00070300091746,50 08/11/2025301,25"
-  → ISIN = DE0007030009 (12 caractères) à ignorer
-  → Après ISIN: 1746,50 (prix) | Date: 08/11/2025 | Après date: 301,25 (valeur)
-  → Vérif: 0.172485 × 1746.50 = 301.25 ✓
-  → prix_unitaire=1746.50, valeur_totale=301.25
-
-- "5,048182 titre(s) Sanofi ISIN:FR000012057886,06 08/11/2025434,45"
-  → ISIN = FR0000120578 (12 caractères) à ignorer
-  → Après ISIN: 86,06 (prix) | Date: 08/11/2025 | Après date: 434,45 (valeur)
-  → Vérif: 5.048182 × 86.06 = 434.45 ✓
-  → prix_unitaire=86.06, valeur_totale=434.45
-
-Format JSON attendu :
-{{
-  "valorisation_totale": <montant total en euros pour le portefeuille {tax_wrapper} UNIQUEMENT>,
-  "date": "<date du document au format YYYY-MM-DD>",
-  "titres": [
-    {{
-      "symbole": "<code ISIN ou ticker (pour crypto: symbole comme BTC, ETH)>",
-      "nom": "<nom du titre ou de la crypto>",
-      "quantite": <nombre d'actions/parts/unités>,
-      "prix_unitaire": <COURS PAR TITRE en euros>,
-      "valeur_totale": <COURS EN EUR = quantité × prix_unitaire>,
-      "type": "<action|etf|obligation|crypto>",
-      "portefeuille": "{tax_wrapper}"
-    }}
-  ]
-}}
-
-Texte du document :
-""" + pdf_text[:50000]
-        
-        # Appeler l'API OpenAI
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Tu es un assistant spécialisé dans l'analyse de documents financiers. Tu dois extraire les données de manière précise et les formater en JSON."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.1,
-            response_format={"type": "json_object"}
-        )
-        
-        # Parser la réponse
-        result = json.loads(response.choices[0].message.content)
-        from django.utils import timezone
-        
-        # Traiter selon le format (all ou single)
-        if portfolio_type == "all":
-            # Format multi-portefeuilles
-            date_doc = datetime.strptime(result["date"], "%Y-%m-%d").date()
-            posted_datetime = timezone.make_aware(datetime.combine(date_doc, datetime.min.time()))
-            
-            total_valorisation = Decimal("0")
-            total_holdings = 0
-            portefeuilles_info = []
-            
-            # Traiter chaque portefeuille
-            for pf in result.get("portefeuilles", []):
-                pf_type = pf["type"]
-                pf_valorisation = Decimal(str(pf["valorisation"]))
-                total_valorisation += pf_valorisation
-                
-                # Supprimer les anciennes positions de ce portefeuille
-                InvestmentHolding.objects.filter(
-                    account=account,
-                    tax_wrapper=pf_type
-                ).delete()
-                
-                # Créer les nouvelles positions
-                pf_holdings = 0
-                for titre in pf.get("titres", []):
-                    InvestmentHolding.objects.create(
-                        account=account,
-                        symbol=titre["symbole"],
-                        name=titre["nom"],
-                        instrument_type=titre.get("type", "stock"),
-                        quantity=Decimal(str(titre["quantite"])),
-                        avg_cost=Decimal(str(titre["prix_unitaire"])),
-                        tax_wrapper=pf_type,
-                        currency="EUR"
-                    )
-                    pf_holdings += 1
-                
-                total_holdings += pf_holdings
-                portefeuilles_info.append({
-                    "type": pf_type,
-                    "valorisation": float(pf_valorisation),
-                    "titres": pf_holdings
-                })
-                
-                # Créer une transaction snapshot POUR CE PORTEFEUILLE
-                # Cela permet d'avoir une valorisation par type (PEA, CTO, CRYPTO) à une date donnée
-                # On utilise la description comme identifiant unique car les requêtes JSONField peuvent être problématiques
-                description = f"Snapshot valorisation {pf_type} (import PDF)"
-                tx, created = Transaction.objects.update_or_create(
-                    account=account,
-                    posted_at=posted_datetime,
-                    description=description,
-                    amount=Decimal("0"),
-                    defaults={
-                        "account_balance": pf_valorisation,
-                        "raw": {
-                            "source": "traderepublic_pdf", 
-                            "portfolio_type": pf_type,
-                            "data": pf
-                        }
-                    }
-                )
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.info(f"{'✅ Créée' if created else '🔄 Mise à jour'} - Transaction snapshot {pf_type}: {pf_valorisation}€ à la date {posted_datetime.date()}")
-            
-            # Mettre à jour le compte avec la valorisation totale
-            account.initial_balance = total_valorisation
-            account.balance_snapshot_date = date_doc
-            account.portfolio_type = "all"
-            account.save()
-            
-            return JsonResponse({
-                "success": True,
-                "message": f"✅ Tous les portefeuilles mis à jour avec succès",
-                "details": {
-                    "compte": account.name,
-                    "valorisation_totale": float(total_valorisation),
-                    "date": date_doc.isoformat(),
-                    "titres_importes": total_holdings,
-                    "portefeuilles": portefeuilles_info
-                }
-            })
-        
-        else:
-            # Format single portefeuille (ancien)
-            valorisation = Decimal(str(result["valorisation_totale"]))
-            date_doc = datetime.strptime(result["date"], "%Y-%m-%d").date()
-            posted_datetime = timezone.make_aware(datetime.combine(date_doc, datetime.min.time()))
-            
-            # Créer une transaction snapshot pour la valorisation
-            # On utilise la description comme identifiant unique
-            description = f"Snapshot valorisation {tax_wrapper} (import PDF)"
-            tx, created = Transaction.objects.update_or_create(
-                account=account,
-                posted_at=posted_datetime,
-                description=description,
-                amount=Decimal("0"),
-                defaults={
-                    "account_balance": valorisation,
-                    "raw": {
-                        "source": "traderepublic_pdf",
-                        "portfolio_type": tax_wrapper,
-                        "data": result
-                    }
-                }
-            )
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"{'✅ Créée' if created else '🔄 Mise à jour'} - Transaction snapshot {tax_wrapper}: {valorisation}€ à la date {posted_datetime.date()}")
-            
-            # Mettre à jour le compte
-            account.initial_balance = valorisation
-            account.balance_snapshot_date = date_doc
-            account.portfolio_type = portfolio_type
-            account.save()
-            
-            # Supprimer les anciennes positions de ce compte avec le même tax_wrapper
-            InvestmentHolding.objects.filter(
-                account=account, 
-                tax_wrapper=tax_wrapper
-            ).delete()
-            
-            # Créer les nouvelles positions
-            holdings_created = 0
-            for titre in result.get("titres", []):
-                # Récupérer le portefeuille du titre (si fourni par l'IA)
-                titre_tax_wrapper = titre.get("portefeuille", tax_wrapper)
-                
-                InvestmentHolding.objects.create(
-                    account=account,
-                    symbol=titre["symbole"],
-                    name=titre["nom"],
-                    instrument_type=titre.get("type", "stock"),
-                    quantity=Decimal(str(titre["quantite"])),
-                    avg_cost=Decimal(str(titre["prix_unitaire"])),
-                    tax_wrapper=titre_tax_wrapper,
-                    currency="EUR"
-                )
-                holdings_created += 1
-            
-            return JsonResponse({
-                "success": True,
-                "message": f"✅ Portefeuille {tax_wrapper} mis à jour avec succès",
-                "details": {
-                    "compte": account.name,
-                    "portefeuille": tax_wrapper,
-                    "valorisation": float(valorisation),
-                    "date": date_doc.isoformat(),
-                    "titres_importes": holdings_created
-                }
-            })
-        
-    except Account.DoesNotExist:
-        return JsonResponse({"error": "Compte introuvable"}, status=404)
-    except Exception as e:
-        import traceback
-        error_msg = str(e)
-        if settings.DEBUG:
-            error_msg += f"\n{traceback.format_exc()}"
-        return JsonResponse({"error": f"Erreur lors de l'import: {error_msg}"}, status=500)
-
-
-def extract_text_from_pdf(pdf_file: UploadedFile) -> str:
-    """
-    Extrait le texte d'un fichier PDF
-    """
-    try:
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
-        text = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
-        return text
-    except Exception as e:
-        raise Exception(f"Erreur lors de l'extraction du PDF: {str(e)}")
-
-
 # ============================================================================
 # Vues pour la gestion des connexions bancaires (Story 1.8)
 # ============================================================================
@@ -2547,9 +1508,8 @@ def bank_connections_list(request: HttpRequest) -> HttpResponse:
         connection.last_success_log = last_success_log
         connection.transactions_count = last_success_log.transactions_count if last_success_log else 0
 
-        # Trouver le compte associé
-        account = Account.objects.filter(bank_connection=connection).first()
-        connection.linked_account = account
+        # Trouver TOUS les comptes liés à cette connexion
+        connection.linked_accounts = list(Account.objects.filter(bank_connection=connection).order_by("name"))
 
     return render(request, "finance/bank_connections.html", {"connections": connections})
 
@@ -2700,25 +1660,10 @@ def bank_connection_2fa(request: HttpRequest, connection_id: int) -> HttpRespons
             if connection.provider != BankConnection.Provider.TRADE_REPUBLIC:
                 messages.error(request, "Le renvoi de code 2FA n'est disponible que pour Trade Republic.")
                 return redirect("bank_connection_2fa", connection_id=connection_id)
-
-            try:
-                from finance.services.encryption_service import EncryptionService
-                from finance.connectors.traderepublic import TradeRepublicConnector
-
-                credentials = EncryptionService.decrypt_credentials(connection.encrypted_credentials)
-                connector = TradeRepublicConnector()
-                connector.phone_number = credentials.get("phone_number")
-                connector.pin = credentials.get("pin")
-
-                # Initier la connexion pour obtenir un nouveau process_id
-                auth_result = connector.authenticate(credentials)
-                if auth_result.get("requires_2fa"):
-                    messages.success(request, "Code 2FA renvoyé avec succès.")
-                else:
-                    messages.error(request, "Erreur lors du renvoi du code 2FA.")
-            except Exception as e:
-                messages.error(request, f"Erreur lors du renvoi du code 2FA : {str(e)}")
-
+            messages.warning(
+                request,
+                "Le flux 2FA legacy est désactivé. Relancez la synchronisation depuis le panel Connexions Bancaires.",
+            )
             return redirect("bank_connection_2fa", connection_id=connection_id)
 
         if not two_fa_code:
@@ -2809,14 +1754,21 @@ def account_sync_api(request: HttpRequest, account_id: int) -> JsonResponse:
                 == TradeRepublicValuationSnapshot.AuthStatus.NEEDS_MANUAL_AUTH
             ):
                 logger.warning("tr_bridge_sync_auth_required source=account_sync_api account_id=%s", account.id)
-                sync_log.status = SyncLog.Status.ERROR
-                sync_log.error_message = "Authentification Trade Republic requise (2FA)"
-                sync_log.transactions_count = 0
-                sync_log.completed_at = timezone.now()
-                sync_log.save(
-                    update_fields=["status", "error_message", "transactions_count", "completed_at"]
-                )
-                bank_connection.sync_status = BankConnection.SyncStatus.ERROR
+                # Demande 2FA : ce n'est pas une erreur métier.
+                # Pour éviter une double ligne "sync" (1ère requête 409 auth_required,
+                # puis 2ème requête après saisie du code), on supprime le SyncLog
+                # créé pour cette tentative.
+                try:
+                    sync_log.delete()
+                except Exception:
+                    sync_log.status = SyncLog.Status.STARTED
+                    sync_log.error_message = ""
+                    sync_log.transactions_count = 0
+                    sync_log.completed_at = timezone.now()
+                    sync_log.save(
+                        update_fields=["status", "error_message", "transactions_count", "completed_at"]
+                    )
+                bank_connection.sync_status = BankConnection.SyncStatus.PENDING
                 bank_connection.save(update_fields=["sync_status", "updated_at"])
                 return JsonResponse(
                     {
@@ -3254,3 +2206,104 @@ def sync_logs_export(request: HttpRequest) -> HttpResponse:
     
     return response
 
+
+# ============================================================================
+# Gestion des invitations utilisateur
+# ============================================================================
+
+
+def _superuser_required(view_func):
+    """Décorateur : accès réservé aux superusers."""
+    from functools import wraps
+
+    @wraps(view_func)
+    def _wrapped(request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return redirect(f"{settings.LOGIN_URL}?next={request.path}")
+        if not request.user.is_superuser:
+            messages.error(request, "Accès réservé aux administrateurs.")
+            return redirect("/")
+        return view_func(request, *args, **kwargs)
+
+    return _wrapped
+
+
+@_superuser_required
+def invitation_list(request: HttpRequest) -> HttpResponse:
+    """Liste des invitations (superuser uniquement)."""
+    invitations = InvitationToken.objects.select_related("created_by", "used_by").all()
+    return render(request, "finance/invitations.html", {"invitations": invitations})
+
+
+@_superuser_required
+def invitation_create(request: HttpRequest) -> HttpResponse:
+    """Crée un nouveau token d'invitation (superuser uniquement)."""
+    if request.method == "POST":
+        email = request.POST.get("email", "").strip()
+        days = int(request.POST.get("expires_days", 7) or 7)
+        expires_at = timezone.now() + timedelta(days=days)
+        invitation = InvitationToken.objects.create(
+            created_by=request.user,
+            email=email,
+            expires_at=expires_at,
+        )
+        messages.success(request, f"Invitation créée. Lien valide {days} jours.")
+        return redirect("invitation_list")
+    return render(request, "finance/invitation_create.html")
+
+
+@_superuser_required
+def invitation_delete(request: HttpRequest, token: str) -> HttpResponse:
+    """Supprime une invitation non utilisée (superuser uniquement)."""
+    inv = get_object_or_404(InvitationToken, token=token, created_by=request.user)
+    if request.method == "POST":
+        if inv.is_used:
+            messages.error(request, "Cette invitation a déjà été utilisée.")
+        else:
+            inv.delete()
+            messages.success(request, "Invitation supprimée.")
+    return redirect("invitation_list")
+
+
+def register_with_invitation(request: HttpRequest, token: str) -> HttpResponse:
+    """Page d'inscription via token d'invitation."""
+    from django.contrib.auth import login, get_user_model
+    from django.contrib.auth.forms import SetPasswordForm
+
+    User = get_user_model()
+
+    invitation = get_object_or_404(InvitationToken, token=token)
+    if not invitation.is_valid:
+        return render(request, "finance/invitation_invalid.html", {"invitation": invitation})
+
+    error = None
+    if request.method == "POST":
+        username = request.POST.get("username", "").strip()
+        password1 = request.POST.get("password1", "")
+        password2 = request.POST.get("password2", "")
+
+        if not username:
+            error = "Le nom d'utilisateur est requis."
+        elif User.objects.filter(username=username).exists():
+            error = "Ce nom d'utilisateur est déjà pris."
+        elif len(password1) < 8:
+            error = "Le mot de passe doit contenir au moins 8 caractères."
+        elif password1 != password2:
+            error = "Les mots de passe ne correspondent pas."
+        else:
+            user = User.objects.create_user(
+                username=username,
+                password=password1,
+                email=invitation.email or "",
+            )
+            invitation.used_at = timezone.now()
+            invitation.used_by = user
+            invitation.save(update_fields=["used_at", "used_by"])
+            login(request, user)
+            messages.success(request, f"Bienvenue, {username} ! Votre compte a été créé.")
+            return redirect("/")
+
+    return render(request, "finance/register.html", {
+        "invitation": invitation,
+        "error": error,
+    })

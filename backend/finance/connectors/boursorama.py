@@ -764,6 +764,9 @@ class BoursoBankConnector(BaseBankConnector):
             )
         except Exception as e:
             logger.warning("BoursoBank: fallback DOM echoue: %s", e)
+            msg = str(e).lower()
+            if "target crashed" in msg or "page crashed" in msg:
+                raise ConnectionTimeoutError("BoursoBank: page cible crash pendant l'extraction transactions")
             return []
 
         out: List[Dict] = []
