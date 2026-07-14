@@ -4,6 +4,7 @@ import fcntl
 import logging
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import time
@@ -78,10 +79,14 @@ def fetch_tr_valuation(
         getattr(settings, "TR_BRIDGE_TIMEOUT_SECONDS", timeout_seconds) or timeout_seconds
     )
     script_path = _script_path()
-    out_file = os.path.join(
-        tempfile.gettempdir(),
-        f"tr_bridge_out_{os.getpid()}_{int(time.time() * 1000)}.json",
-    )
+    # Le fichier de sortie contient des données financières. On l'isole dans un
+    # dossier privé (mkdtemp = 0700, propriété du process Django) plutôt que dans
+    # le /tmp partagé, et on le détruit sur toutes les sorties (voir _cleanup_tmp).
+    tmp_dir = tempfile.mkdtemp(prefix="tr_bridge_")
+    out_file = os.path.join(tmp_dir, "out.json")
+
+    def _cleanup_tmp() -> None:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
     command = [
         _bun_bin(),
         "run",
@@ -128,6 +133,7 @@ def fetch_tr_valuation(
             raise TradeRepublicBridgeError("bridge_busy: another sync is already running")
     except TradeRepublicBridgeError:
         lock_file.close()
+        _cleanup_tmp()
         raise
 
     try:
@@ -141,10 +147,12 @@ def fetch_tr_valuation(
         )
     except subprocess.TimeoutExpired as exc:
         partial = f"{exc.stdout or ''}\n{exc.stderr or ''}".strip()
+        _cleanup_tmp()
         if _is_manual_auth_hint(partial):
             raise TradeRepublicBridgeAuthRequired("auth_required") from exc
         raise TradeRepublicBridgeError(f"bridge_timeout: {exc}") from exc
     except OSError as exc:
+        _cleanup_tmp()
         raise TradeRepublicBridgeError(f"bridge_unreachable: {exc}") from exc
     finally:
         if lock_acquired:
@@ -185,12 +193,8 @@ def fetch_tr_valuation(
                 ):
                     payload = candidate
     finally:
-        try:
-            if os.path.exists(out_file):
-                os.unlink(out_file)
-        except OSError:
-            # Nettoyage best-effort.
-            pass
+        # Détruit le dossier privé (out.json + éventuel .tmp_<pid> laissé par Bun).
+        _cleanup_tmp()
 
     if bridge_status == "needs_manual_auth" or (
         isinstance(payload, dict) and payload.get("status") == "needs_manual_auth"

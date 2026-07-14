@@ -1,5 +1,7 @@
 import { TradeRepublicApi, createMessage, type Portfolio } from "trapi";
-import { existsSync, readFileSync, renameSync, writeFileSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, renameSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
+import { homedir } from "os";
+import { join as joinPath } from "path";
 
 type JsonObject = Record<string, unknown>;
 type PositionLite = {
@@ -485,8 +487,10 @@ async function main() {
     }
 
     // Écriture atomique: éviter que le backend lise un fichier partiellement écrit.
+    // Le payload contient des données financières → 0600 dès la création du .tmp
+    // (sinon la fenêtre d'exposition dure jusqu'au rename).
     const tmpPath = `${outFile}.tmp_${process.pid}`;
-    writeFileSync(tmpPath, JSON.stringify(payload), { encoding: "utf-8" });
+    writeFileSync(tmpPath, JSON.stringify(payload), { encoding: "utf-8", mode: 0o600 });
     renameSync(tmpPath, outFile);
   };
 
@@ -507,7 +511,16 @@ async function main() {
 
   // Fichier d'état inter-processus: permet de réutiliser processId + wafToken entre
   // le premier appel (qui déclenche l'envoi du SMS) et le second (qui soumet le code).
-  const stateFile = `/tmp/tr_bridge_${Buffer.from(phoneNumber).toString("hex").slice(0, 20)}.json`;
+  // Il contient des données sensibles (cookies/wafToken) → dossier privé (0700) dans
+  // le home de l'utilisateur, jamais dans le /tmp partagé (évite symlink/disclosure).
+  const stateDir = joinPath(homedir(), ".cache", "tr-bridge");
+  try {
+    mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  } catch { /* ignore */ }
+  const stateFile = joinPath(
+    stateDir,
+    `state_${Buffer.from(phoneNumber).toString("hex").slice(0, 20)}.json`,
+  );
   const STATE_TTL_MS = 10 * 60 * 1000; // 10 min = durée de validité du code TR
 
   const api = new TradeRepublicApi(phoneNumber, pin);
@@ -588,7 +601,14 @@ async function main() {
         const wafToken: string | undefined = apiAny.currentWafToken;
         if (processId) {
           try {
-            writeFileSync(stateFile, JSON.stringify({ processId, rawCookies, wafToken, savedAt: Date.now() }));
+            // Recréation propre en 0600 (unlink d'abord: writeFileSync ne rechmod pas
+            // un fichier existant, et ça évite de suivre un éventuel lien pré-planté).
+            try { unlinkSync(stateFile); } catch { /* ignore */ }
+            writeFileSync(
+              stateFile,
+              JSON.stringify({ processId, rawCookies, wafToken, savedAt: Date.now() }),
+              { mode: 0o600 },
+            );
           } catch { /* ignore */ }
         }
 
