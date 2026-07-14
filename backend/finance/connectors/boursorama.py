@@ -106,6 +106,8 @@ class BoursoBankConnector(BaseBankConnector):
             )
             logger.info("BoursoBank: proxy %s", proxy_server)
 
+        _patch_scraper_login(self._scraper)
+
         auth_timeout = int(getattr(settings, "BOURSOBANK_AUTH_TIMEOUT_MS", 30000))
         original_timeout = getattr(self._scraper, "timeout", None)
         try:
@@ -347,6 +349,8 @@ class BoursoBankConnector(BaseBankConnector):
             raise BankConnectionError(
                 "Aucun compte detecte sur /budget/mouvements."
             )
+        for acc in accounts:
+            logger.info("BoursoBank: compte id=%s name=%s balance=%s link=%s", acc.id, acc.name, acc.balance, acc.link)
         logger.info("BoursoBank: %d compte(s) detecte(s)", len(accounts))
         return accounts
 
@@ -391,7 +395,13 @@ class BoursoBankConnector(BaseBankConnector):
                     break
 
         if selected is None:
-            selected = self._accounts[0]
+            for ext in self._accounts:
+                ext_link = getattr(ext, "link", "") or ""
+                if "/compte/cav/" in ext_link or "/compte/chq/" in ext_link:
+                    selected = ext
+                    break
+            if selected is None:
+                selected = self._accounts[0]
             if len(self._accounts) > 1:
                 logger.warning(
                     "BoursoBank: pas de match strict pour '%s', utilisation de '%s'",
@@ -810,6 +820,85 @@ class BoursoBankConnector(BaseBankConnector):
 # ======================================================================
 # Fonctions utilitaires (hors classe)
 # ======================================================================
+
+
+def _patch_scraper_login(scraper):
+    """Monkey-patch BoursoScraper.login to handle 'Se connecter' button rename."""
+    import types
+
+    original_login = scraper.login
+
+    def patched_login(self):
+        url = f"{self.apiUrl}/budget/mouvements"
+        self.logger.debug(f"Load accounts page : {url}")
+        self.page.goto(url)
+
+        self.locatorCookies = self.page.get_by_role("button", name="Continuer sans accepter")
+        self.locatorId = self.page.get_by_role("textbox", name="Saisissez votre identifiant")
+        self.locatorMemorize = self.page.get_by_text("Mémoriser mon identifiant")
+        self.locatorButtonNext = self.page.get_by_role("button", name="Suivant")
+        self.locatorButtonConnect = self.page.get_by_role("button", name="Je me connecte").or_(
+            self.page.get_by_role("button", name="Se connecter")
+        )
+        self.locatorButtonReconnect = self.page.get_by_role("link", name="Je me reconnecte")
+        self.locatorHeaderAccountsPage = self.page.get_by_text("Mes comptes bancaires", exact=True)
+        self.locatorWrongPass = self.page.get_by_text("Identifiant ou mot de passe")
+
+        expectedLocators = [
+            self.locatorCookies,
+            self.locatorId,
+            self.locatorButtonConnect,
+            self.locatorHeaderAccountsPage,
+            self.locatorButtonReconnect,
+        ]
+
+        while True:
+            multiLocator = self.orLocator(expectedLocators)
+            multiLocator.wait_for(state="visible")
+            if self.locatorCookies in expectedLocators and len(self.locatorCookies.all()) > 0:
+                self.logger.debug("Found cookie consent, click no")
+                self.locatorCookies.click()
+                expectedLocators.remove(self.locatorCookies)
+            elif self.locatorHeaderAccountsPage in expectedLocators and len(self.locatorHeaderAccountsPage.all()) > 0:
+                self.logger.info("Already connected !")
+                return True
+            elif self.locatorButtonReconnect in expectedLocators and len(self.locatorButtonReconnect.all()) > 0:
+                self.logger.info("Click reconnect button")
+                self.locatorButtonReconnect.click()
+                expectedLocators.remove(self.locatorButtonReconnect)
+            elif self.locatorId in expectedLocators and len(self.locatorId.all()) > 0:
+                self.logger.debug("Found username input, enter login")
+                self.locatorId.fill(self.username)
+                self.locatorMemorize.click()
+                self.logger.debug("Clic submit login id")
+                self.locatorButtonNext.click()
+                expectedLocators.remove(self.locatorId)
+            elif self.locatorButtonConnect in expectedLocators and len(self.locatorButtonConnect.all()) > 0:
+                self.logger.debug("Found Button connect")
+                self.logger.debug("Enter password")
+                self.decryptPassword()
+                import time as _time
+                _time.sleep(0.3)
+                self.logger.debug("Clic Connect Button")
+                self.locatorButtonConnect.click()
+                break
+
+        expectedLocators = [self.locatorHeaderAccountsPage, self.locatorWrongPass]
+        multiLocator = self.orLocator(expectedLocators)
+        multiLocator.wait_for(state="visible")
+        if len(self.locatorHeaderAccountsPage.all()) > 0:
+            self.logger.info("Login successfull!")
+            self.logger.debug("Saving context")
+            self.context.storage_state(path=self.contextFile)
+            return True
+        elif len(self.locatorWrongPass.all()) > 0:
+            self.logger.error("Wrong password!")
+        else:
+            self.logger.error("Unexpected result, login failed.")
+        return False
+
+    scraper.login = types.MethodType(patched_login, scraper)
+
 
 def _normalize_digits(value: str) -> str:
     return "".join(ch for ch in (value or "") if ch.isdigit())

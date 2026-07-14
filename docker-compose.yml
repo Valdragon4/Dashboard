@@ -22,7 +22,7 @@ services:
     mem_limit: 1g
     restart: always
     shm_size: '256m'
-    command: bash -c "python manage.py migrate && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --timeout 300 --workers 2"
+    command: bash -c "python manage.py migrate && python manage.py collectstatic --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --timeout 300 --workers 2"
     env_file: .env
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -34,7 +34,7 @@ services:
       - ./trade_republic_scraper:/app/trade_republic_scraper
       - ./tr-bridge:/app/tr-bridge
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on:
       db:
         condition: service_healthy
