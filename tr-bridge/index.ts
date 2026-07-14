@@ -390,7 +390,57 @@ function computeCostBasisFromPortfolio(portfolio: Portfolio): number {
   return total;
 }
 
+/**
+ * Détecte une erreur WebSocket "orpheline" : quand la session sauvegardée est
+ * expirée, Trade Republic refuse le handshake (« Expected 101 status code »).
+ * La lib `trapi` attrape déjà cette erreur (once("error")) et bascule sur le
+ * login complet, mais le socket mort ré-émet un second event `error` de façon
+ * asynchrone. Sans écouteur, Bun transforme cet ErrorEvent en Unhandled error
+ * et tue le process (exit 1) AVANT que le flow needs_manual_auth ne s'exécute.
+ * On neutralise donc uniquement ce bruit WS ; tout le reste crashe normalement.
+ */
+function isOrphanWebSocketError(err: unknown): boolean {
+  const message =
+    err instanceof Error
+      ? err.message
+      : isObject(err) && typeof (err as { message?: unknown }).message === "string"
+        ? ((err as { message: string }).message)
+        : String(err ?? "");
+  const type = isObject(err) ? (err as { type?: unknown }).type : undefined;
+  return (
+    type === "error" || // ws ErrorEvent (isTrusted/type)
+    /Expected 101 status code/i.test(message) ||
+    /WebSocket connection to .* failed/i.test(message) ||
+    /Invalid WebSocket frame/i.test(message)
+  );
+}
+
 async function main() {
+  // Garde-fou global : empêche qu'un ErrorEvent WS orphelin ne fasse crasher
+  // tout le bridge. Enregistré en premier pour couvrir toute la durée de vie.
+  process.on("uncaughtException", (err) => {
+    if (isOrphanWebSocketError(err)) {
+      console.error(
+        "[tr-bridge] ErrorEvent WebSocket orphelin ignoré:",
+        err instanceof Error ? err.message : err,
+      );
+      return;
+    }
+    console.error("[tr-bridge] Exception non capturée:", err);
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    if (isOrphanWebSocketError(reason)) {
+      console.error(
+        "[tr-bridge] Rejet WebSocket orphelin ignoré:",
+        reason instanceof Error ? reason.message : reason,
+      );
+      return;
+    }
+    console.error("[tr-bridge] Rejet non géré:", reason);
+    process.exit(1);
+  });
+
   const [, , phoneNumber, pin, ...flags] = process.argv;
   const diagnosticsEnabled = flags.includes("--diag");
   const jsonMode = flags.includes("--json");

@@ -14,6 +14,7 @@ from finance.models import (
     BankConnection,
     TradeRepublicAccountValuationSnapshot,
     TradeRepublicPortfolioSnapshot,
+    TradeRepublicSubAccountMapping,
     TradeRepublicValuationSnapshot,
 )
 from finance.services.encryption_service import EncryptionError, EncryptionService
@@ -86,15 +87,10 @@ def _resolve_trade_republic_credentials(account: Account) -> tuple[str, str]:
         if phone and pin:
             return phone, pin
 
-    # 3) Dernier fallback: variables d'environnement
-    env_phone = (os.environ.get("TR_PHONE", "") or "").strip()
-    env_pin = (os.environ.get("TR_PIN", "") or "").strip()
-    if env_phone and env_pin:
-        return env_phone, env_pin
-
     raise TradeRepublicBridgeError(
-        "missing_trade_republic_credentials: associe une BankConnection TR au compte "
-        "ou définis TR_PHONE/TR_PIN dans l'environnement."
+        f"missing_trade_republic_credentials: aucun identifiant Trade Republic trouvé "
+        f"pour le compte '{account.name}' (owner: {account.owner}). "
+        f"Associe une BankConnection TR avec phone/pin à ce compte."
     )
 
 
@@ -115,6 +111,20 @@ def _validate_payload(payload: dict) -> None:
         raise TradeRepublicBridgeError("invalid_payload_global")
     if "accounts" not in payload or not isinstance(payload.get("accounts"), list):
         raise TradeRepublicBridgeError("invalid_payload_accounts")
+
+
+def _resolve_subaccount_portfolio_type(owner, external_account_id: str) -> str:
+    """
+    Retourne le type de portefeuille (PEA/CTO/...) choisi par l'utilisateur pour ce
+    sous-compte Trade Republic. Découvre automatiquement le sous-compte (mapping vide
+    = "à classer") s'il n'existe pas encore, et retourne CTO par défaut tant qu'il
+    n'a pas été classé.
+    """
+    mapping, _ = TradeRepublicSubAccountMapping.objects.get_or_create(
+        owner=owner,
+        external_account_id=external_account_id,
+    )
+    return mapping.portfolio_type or TradeRepublicPortfolioSnapshot.PortfolioType.CTO
 
 
 def _create_portfolio_snapshot(
@@ -249,12 +259,9 @@ def sync_bridge_snapshot_for_account(
             raw=row,
         )
 
-        # Résoudre le type de portefeuille depuis le mapping TR_ACCOUNT_TYPE_MAP
-        from django.conf import settings as _settings
-        account_type_map: dict[str, str] = getattr(_settings, "TR_ACCOUNT_TYPE_MAP", {})
+        # Résoudre le type de portefeuille (PEA/CTO) depuis le mapping par sous-compte
         tr_account_id = str(row.get("account") or "")
-        # Type pour les societes : CTO par défaut, PEA si mappé
-        societes_type = account_type_map.get(tr_account_id, TradeRepublicPortfolioSnapshot.PortfolioType.CTO)
+        societes_type = _resolve_subaccount_portfolio_type(account.owner, tr_account_id)
 
         portfolios = row.get("portfolios") if isinstance(row.get("portfolios"), dict) else {}
         if portfolios:
@@ -310,12 +317,10 @@ def sync_bridge_snapshot_for_account(
             )
     else:
         # Reconstruire les totaux globaux par type depuis les comptes avec mapping
-        from django.conf import settings as _settings2
-        account_type_map2: dict[str, str] = getattr(_settings2, "TR_ACCOUNT_TYPE_MAP", {})
         global_by_type: dict[str, dict] = {}
         for row in account_rows:
             tr_id = str(row.get("account") or "")
-            soc_type = account_type_map2.get(tr_id, TradeRepublicPortfolioSnapshot.PortfolioType.CTO)
+            soc_type = _resolve_subaccount_portfolio_type(account.owner, tr_id)
             soc_val = _extract_nested(row, "societes") or 0
             soc_inv = _extract_nested(row, "societes", "invested") or row.get("invested_societes") or 0
             cry_val = _extract_nested(row, "crypto") or 0
