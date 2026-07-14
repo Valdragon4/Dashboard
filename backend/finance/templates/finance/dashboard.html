@@ -310,6 +310,103 @@
   </div>
   {% endif %}
 
+  <!-- TRI (Taux de Rentabilité Interne) -->
+  {% if investment_accounts %}
+  <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 mb-6" id="tri-card">
+    <div class="flex items-center justify-between mb-5">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 bg-emerald-100 rounded-lg flex items-center justify-center">
+          <svg class="w-5 h-5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
+          </svg>
+        </div>
+        <div>
+          <h2 class="text-lg font-bold text-gray-900">TRI — Taux de Rentabilité Interne</h2>
+          <p class="text-xs text-gray-500">Rendement annualisé tenant compte des dates de versement (XIRR)</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sélecteur de période -->
+    <div class="flex flex-wrap gap-2 mb-5">
+      <button onclick="loadTri('since_inception')" id="tri-btn-since_inception"
+        class="tri-period-btn px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors bg-emerald-600 text-white border-emerald-600">
+        Depuis le début
+      </button>
+      <button onclick="loadTri('ytd')" id="tri-btn-ytd"
+        class="tri-period-btn px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors bg-white text-gray-700 border-gray-300 hover:bg-gray-50">
+        Année en cours
+      </button>
+      <button onclick="loadTri('1y')" id="tri-btn-1y"
+        class="tri-period-btn px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors bg-white text-gray-700 border-gray-300 hover:bg-gray-50">
+        12 mois glissants
+      </button>
+      <button onclick="loadTri('custom')" id="tri-btn-custom"
+        class="tri-period-btn px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors bg-white text-gray-700 border-gray-300 hover:bg-gray-50">
+        Personnalisée
+      </button>
+    </div>
+
+    <!-- Dates custom (masquées par défaut) -->
+    <div id="tri-custom-dates" class="hidden flex flex-wrap gap-3 mb-5 p-3 bg-gray-50 rounded-xl">
+      <div class="flex items-center gap-2">
+        <label class="text-sm text-gray-600 whitespace-nowrap">Du</label>
+        <input type="date" id="tri-date-start" class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500">
+      </div>
+      <div class="flex items-center gap-2">
+        <label class="text-sm text-gray-600 whitespace-nowrap">au</label>
+        <input type="date" id="tri-date-end" class="text-sm border border-gray-300 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500">
+      </div>
+      <button onclick="loadTri('custom')" class="px-3 py-1.5 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 transition-colors">
+        Calculer
+      </button>
+    </div>
+
+    <!-- Résultats -->
+    <div id="tri-results">
+      <!-- Loading -->
+      <div id="tri-loading" class="flex items-center justify-center py-8 gap-3 text-gray-500">
+        <svg class="animate-spin w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+        <span class="text-sm">Calcul en cours…</span>
+      </div>
+
+      <!-- Données -->
+      <div id="tri-data" class="hidden">
+        <!-- TRI Global -->
+        <div class="flex items-center justify-between p-4 bg-emerald-50 rounded-xl mb-4">
+          <div>
+            <div class="text-sm font-semibold text-gray-700">Portefeuille global</div>
+            <div class="text-xs text-gray-500" id="tri-period-label">—</div>
+          </div>
+          <div class="text-right">
+            <div class="text-2xl font-bold" id="tri-global-display">—</div>
+            <div class="text-xs text-gray-500" id="tri-global-label">annualisé</div>
+            <div class="text-xs text-gray-400 mt-0.5" id="tri-global-secondary"></div>
+          </div>
+        </div>
+
+        <!-- TRI par type -->
+        <div id="tri-by-type" class="grid grid-cols-2 gap-3 mb-4 sm:grid-cols-4"></div>
+
+        <!-- TRI par compte -->
+        <div id="tri-by-account-container" class="hidden">
+          <div class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Par compte</div>
+          <div id="tri-by-account" class="space-y-2"></div>
+        </div>
+
+        <!-- Avertissement données insuffisantes -->
+        <div id="tri-warning" class="hidden mt-3 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700"></div>
+      </div>
+
+      <!-- Erreur -->
+      <div id="tri-error" class="hidden py-6 text-center text-sm text-red-500"></div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Liste des comptes -->
   <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 mb-8">
     <h2 class="text-xl font-bold text-gray-900 mb-6">Vos comptes</h2>
@@ -654,6 +751,8 @@
   {{ history_chart|json_script:"history-data" }}
   {{ category_chart|json_script:"category-data" }}
   {{ daily_chart|json_script:"daily-data" }}
+  {{ sankey_data|json_script:"sankey-data" }}
+  {{ sankey_details|json_script:"sankey-details" }}
 
   <script>
     // Fonction pour masquer/afficher les montants
@@ -836,7 +935,7 @@
     });
 
     // Diagramme de Sankey
-    const sankeyData = {{ sankey_data }};
+    const sankeyData = JSON.parse(document.getElementById('sankey-data').textContent);
     console.log('Sankey Data:', sankeyData);
     console.log('Sankey Data length:', sankeyData ? sankeyData.length : 0);
     
@@ -1033,7 +1132,7 @@
     }
 
     // Détails des transactions par catégorie
-    const sankeyDetails = {{ sankey_details }};
+    const sankeyDetails = JSON.parse(document.getElementById('sankey-details').textContent);
     console.log('Sankey Details:', sankeyDetails);
     
     // Fonction pour afficher/masquer les détails
@@ -1274,6 +1373,211 @@
         closeValuationModal();
       }
     });
+
+    // =========================================================
+    // TRI (XIRR)
+    // =========================================================
+    const TYPE_COLORS = {
+      CTO: 'bg-blue-100 text-blue-800',
+      PEA: 'bg-green-100 text-green-800',
+      'PEA-PME': 'bg-teal-100 text-teal-800',
+      CRYPTO: 'bg-orange-100 text-orange-800',
+    };
+
+    function triColor(rate) {
+      if (rate === null) return 'text-gray-400';
+      return rate >= 0 ? 'text-emerald-600' : 'text-red-600';
+    }
+
+    // Choisit quel taux mettre en avant : le rendement annualisé n'a vraiment de sens
+    // qu'à partir d'environ un an d'historique. En dessous, le rendement « brut » sur
+    // la période exacte est moins trompeur (ex. -3.5% sur 6 semaines plutôt que -26% « annualisé »).
+    function primaryRate(info, emphasizeAnnualized) {
+      if (info.period_rate === null || info.period_days === null) {
+        return { rate: info.rate, display: info.display, label: 'annualisé', secondary: null };
+      }
+      if (emphasizeAnnualized) {
+        const diff = Math.abs(info.period_rate - info.rate) > 0.0005;
+        return {
+          rate: info.rate,
+          display: info.display,
+          label: 'annualisé',
+          secondary: diff ? `${info.period_display} sur ${info.period_days} j` : null,
+        };
+      }
+      return {
+        rate: info.period_rate,
+        display: info.period_display,
+        label: `sur la période (${info.period_days} j)`,
+        secondary: `${info.display} annualisé`,
+      };
+    }
+
+    function formatPeriodLabel(data) {
+      const fmt = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', {day:'2-digit', month:'short', year:'numeric'}) : '?';
+      const eff = data.effective_period_start;
+      let label = '';
+      if (data.period === 'since_inception') {
+        label = `Depuis le ${fmt(eff || data.period_end)}`;
+      } else if (data.period === 'ytd') {
+        label = eff && eff !== data.period_start
+          ? `Effectif du ${fmt(eff)} au ${fmt(data.period_end)} (premier snapshot disponible)`
+          : `Du 1er janv. au ${fmt(data.period_end)}`;
+      } else if (data.period === '1y') {
+        label = eff && eff !== data.period_start
+          ? `Effectif du ${fmt(eff)} au ${fmt(data.period_end)} (premier snapshot disponible)`
+          : `Du ${fmt(data.period_start)} au ${fmt(data.period_end)}`;
+      } else {
+        label = `Du ${fmt(eff || data.period_start)} au ${fmt(data.period_end)}`;
+      }
+
+      if (data.history_days !== null && data.history_days < 90) {
+        const weeks = Math.round(data.history_days / 7);
+        label += ` — ⚠ ${weeks} sem. de données`;
+      }
+      return label;
+    }
+
+    let currentTriPeriod = 'since_inception';
+
+    function loadTri(period) {
+      currentTriPeriod = period;
+
+      // Style des boutons
+      document.querySelectorAll('.tri-period-btn').forEach(btn => {
+        btn.classList.remove('bg-emerald-600','text-white','border-emerald-600');
+        btn.classList.add('bg-white','text-gray-700','border-gray-300');
+      });
+      const activeBtn = document.getElementById('tri-btn-' + period);
+      if (activeBtn) {
+        activeBtn.classList.remove('bg-white','text-gray-700','border-gray-300');
+        activeBtn.classList.add('bg-emerald-600','text-white','border-emerald-600');
+      }
+
+      // Affichage dates custom
+      const customDates = document.getElementById('tri-custom-dates');
+      if (period === 'custom') {
+        customDates.classList.remove('hidden');
+        // Ne pas charger tant que l'utilisateur n'a pas cliqué "Calculer"
+        const ds = document.getElementById('tri-date-start').value;
+        const de = document.getElementById('tri-date-end').value;
+        if (!ds) return;
+      } else {
+        customDates.classList.add('hidden');
+      }
+
+      // Loading state
+      document.getElementById('tri-loading').classList.remove('hidden');
+      document.getElementById('tri-data').classList.add('hidden');
+      document.getElementById('tri-error').classList.add('hidden');
+
+      let url = `/api/investments/tri/?period=${period}`;
+      if (period === 'custom') {
+        const ds = document.getElementById('tri-date-start').value;
+        const de = document.getElementById('tri-date-end').value;
+        if (ds) url += `&date_start=${ds}`;
+        if (de) url += `&date_end=${de}`;
+      }
+
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          document.getElementById('tri-loading').classList.add('hidden');
+
+          if (data.error) {
+            document.getElementById('tri-error').textContent = data.error;
+            document.getElementById('tri-error').classList.remove('hidden');
+            return;
+          }
+
+          // Global
+          const globalPrimary = primaryRate(data.global, data.emphasize_annualized);
+          const globalDisplay = document.getElementById('tri-global-display');
+          globalDisplay.textContent = globalPrimary.display;
+          globalDisplay.className = 'text-2xl font-bold ' + triColor(globalPrimary.rate);
+          document.getElementById('tri-global-label').textContent = globalPrimary.label;
+          document.getElementById('tri-global-secondary').textContent = globalPrimary.secondary || '';
+
+          document.getElementById('tri-period-label').textContent = formatPeriodLabel(data);
+
+          // Par type
+          const byTypeEl = document.getElementById('tri-by-type');
+          byTypeEl.innerHTML = '';
+          let hasNd = false;
+          Object.entries(data.by_type).forEach(([type, info]) => {
+            if (info.display === 'N/D') hasNd = true;
+            const color = TYPE_COLORS[type] || 'bg-gray-100 text-gray-800';
+            const pr = primaryRate(info, data.emphasize_annualized);
+            byTypeEl.innerHTML += `
+              <div class="p-3 rounded-xl bg-gray-50 border border-gray-100">
+                <div class="flex items-center justify-between mb-1">
+                  <span class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${color}">${type}</span>
+                </div>
+                <div class="text-lg font-bold ${triColor(pr.rate)}">${pr.display}</div>
+                <div class="text-xs text-gray-400">${pr.label}${pr.secondary ? ' · ' + pr.secondary : ''}</div>
+              </div>`;
+          });
+
+          // Par compte
+          const byAccountEl = document.getElementById('tri-by-account');
+          const byAccountContainer = document.getElementById('tri-by-account-container');
+          byAccountEl.innerHTML = '';
+          const accounts = Object.values(data.by_account);
+          if (accounts.length > 1) {
+            byAccountContainer.classList.remove('hidden');
+            accounts.forEach(acc => {
+              if (acc.display === 'N/D') hasNd = true;
+              const pr = primaryRate(acc, data.emphasize_annualized);
+              byAccountEl.innerHTML += `
+                <div class="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50">
+                  <span class="text-sm text-gray-700">${acc.name}</span>
+                  <div class="text-right">
+                    <span class="text-sm font-semibold ${triColor(pr.rate)}">${pr.display}</span>
+                    <span class="block text-[10px] text-gray-400">${pr.label}</span>
+                  </div>
+                </div>`;
+            });
+          } else {
+            byAccountContainer.classList.add('hidden');
+          }
+
+          // Avertissement : historique court ou données manquantes
+          const warn = document.getElementById('tri-warning');
+          const shortHistory = data.history_days !== null && data.history_days < 180;
+          if (hasNd || data.global.display === 'N/D' || shortHistory) {
+            let msg = '';
+            if (shortHistory) {
+              const weeks = Math.round(data.history_days / 7);
+              msg += `Historique court (${weeks} semaines) : le TRI annualisé amplifie fortement les variations sur de courtes périodes — il sera plus représentatif après 6 mois de données. `;
+            }
+            if (hasNd || data.global.display === 'N/D') {
+              msg += 'Données insuffisantes pour certains segments.';
+            }
+            warn.textContent = msg.trim();
+            warn.classList.remove('hidden');
+          } else {
+            warn.classList.add('hidden');
+          }
+
+          document.getElementById('tri-data').classList.remove('hidden');
+        })
+        .catch(err => {
+          document.getElementById('tri-loading').classList.add('hidden');
+          document.getElementById('tri-error').textContent = 'Erreur lors du calcul du TRI.';
+          document.getElementById('tri-error').classList.remove('hidden');
+        });
+    }
+
+    // Initialiser le TRI au chargement
+    if (document.getElementById('tri-card')) {
+      loadTri('since_inception');
+    }
+
+    // Initialiser la date de fin custom à aujourd'hui
+    const triDateEnd = document.getElementById('tri-date-end');
+    if (triDateEnd) {
+      triDateEnd.value = new Date().toISOString().split('T')[0];
+    }
   </script>
 
   <!-- Modal de mise à jour de valorisation -->

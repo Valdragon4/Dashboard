@@ -21,9 +21,14 @@ class Account(models.Model):
         CRYPTO = "crypto", "Cryptomonnaies"
         OTHER = "other", "Autre"
 
+    class Provider(models.TextChoices):
+        TRADEREPUBLIC = "traderepublic", "Trade Republic"
+        BOURSOBANK = "boursobank", "BoursoBank"
+        HELLOBANK_LIVRET = "hellobank_livret", "Hello Bank (Livret)"
+
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     name = models.CharField(max_length=120)
-    provider = models.CharField(max_length=120, blank=True)
+    provider = models.CharField(max_length=120, blank=True, choices=Provider.choices)
     iban = models.CharField(max_length=34, blank=True)
     currency = models.CharField(max_length=8, default="EUR")
     type = models.CharField(max_length=16, choices=AccountType.choices)
@@ -423,5 +428,37 @@ class TradeRepublicPortfolioSnapshot(models.Model):
             models.Index(fields=["snapshot", "portfolio_type"]),
             models.Index(fields=["portfolio_type", "-id"]),
         ]
+
+
+class TradeRepublicSubAccountMapping(models.Model):
+    """
+    Associe un sous-compte Trade Republic (secAccNo, ex: "0276377602") au type
+    de portefeuille fiscal (PEA/CTO/...) choisi par l'utilisateur.
+
+    Remplace le mapping statique TR_ACCOUNT_TYPE_MAP (.env) : les sous-comptes
+    sont découverts automatiquement lors de la synchronisation bridge et
+    l'utilisateur les classe une fois via l'interface.
+    """
+
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="tr_subaccount_mappings",
+    )
+    external_account_id = models.CharField(max_length=64, help_text="Numéro de compte-titres Trade Republic (secAccNo)")
+    portfolio_type = models.CharField(
+        max_length=16,
+        choices=TradeRepublicPortfolioSnapshot.PortfolioType.choices,
+        blank=True,
+        help_text="Type de portefeuille fiscal (vide = à classer)",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        unique_together = ("owner", "external_account_id")
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.external_account_id} -> {self.portfolio_type or '?'}"
 
 

@@ -73,10 +73,20 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 8}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
 # Celery
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 CELERY_TIMEZONE = "Europe/Paris"
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_ACCEPT_CONTENT = ["json"]
 
 from celery.schedules import crontab  # noqa: E402
 
@@ -93,12 +103,41 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
-CORS_ALLOW_ALL_ORIGINS = True
+_cors_env = os.getenv("DJANGO_CORS_ALLOWED_ORIGINS", "").strip()
+CORS_ALLOWED_ORIGINS = [o for o in _cors_env.split(",") if o]
+CORS_ALLOW_ALL_ORIGINS = not CORS_ALLOWED_ORIGINS
 
 # Auth
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/"
+
+# ─── Email SMTP ───────────────────────────────────────────────────────────────
+EMAIL_BACKEND = (
+    "django.core.mail.backends.smtp.EmailBackend"
+    if os.getenv("EMAIL_HOST_PASSWORD", "").strip() not in ("", "CHANGE_ME_mot_de_passe_application")
+    else "django.core.mail.backends.console.EmailBackend"
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() in ("1", "true", "yes")
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = os.getenv("EMAIL_DEFAULT_FROM", EMAIL_HOST_USER)
+
+# ─── Sécurité cookies/sessions (HTTPS only) ──────────────────────────────────
+_https = os.getenv("DJANGO_USE_XFORWARDED_PROTO", "false").lower() in {"1", "true", "yes"}
+SESSION_COOKIE_SECURE = _https
+CSRF_COOKIE_SECURE = _https
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = False  # doit rester False : le JS doit lire ce cookie pour les requêtes AJAX
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+if _https:
+    SECURE_HSTS_SECONDS = 31536000  # 1 an
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_SSL_REDIRECT = False  # Nginx gère la redirection HTTP→HTTPS
 
 # CSRF / Proxy SSL
 # Exemple d'env: DJANGO_CSRF_TRUSTED_ORIGINS=https://finance.valentin-marot.fr
@@ -189,8 +228,5 @@ TR_BRIDGE_TX_LIMIT = int(os.getenv("TR_BRIDGE_TX_LIMIT", "5000"))
 # - mets 0 pour considérer "illimité" (taille bornée uniquement par l'absence de next cursor,
 #   ou la répétition d'un cursor).
 TR_BRIDGE_MAX_PAGES = int(os.getenv("TR_BRIDGE_MAX_PAGES", "5000"))
-import json as _json
-TR_ACCOUNT_TYPE_MAP: dict[str, str] = _json.loads(os.getenv("TR_ACCOUNT_TYPE_MAP", "{}"))
-del _json
 
 

@@ -12,6 +12,7 @@ class AccountForm(forms.ModelForm):
         fields = ["name", "type", "portfolio_type", "currency", "provider", "iban", "interest_rate_apy"]
         widgets = {
             "portfolio_type": forms.Select(attrs={"class": "portfolio-type-field"}),
+            "provider": forms.Select(attrs={"class": "provider-field"}),
         }
 
 

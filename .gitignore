@@ -72,3 +72,12 @@ backend/celerybeat-schedule
 !.cursor/rules/
 !.cursor/rules/**
 
+# =============================
+# Artefacts générés / données
+# =============================
+# Sortie de collectstatic (régénérée au déploiement)
+backend/staticfiles/
+staticfiles/
+# Exports PDF (données, pas du code)
+pdf/
+

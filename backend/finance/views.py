@@ -2,6 +2,7 @@ from datetime import date, datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from collections import defaultdict
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.db.models import Q, Sum, Count, Avg, F, Case, When, IntegerField
 from django.db.models.functions import TruncDay, TruncMonth
 from django.contrib import messages
@@ -25,6 +26,7 @@ from .models import (
     SyncLog,
     TradeRepublicValuationSnapshot,
     TradeRepublicPortfolioSnapshot,
+    TradeRepublicSubAccountMapping,
     InvitationToken,
 )
 from .forms import AccountForm, TransactionForm, BankConnectionForm
@@ -32,7 +34,6 @@ from .services.tr_bridge_sync import sync_bridge_snapshot_with_auth_handling, ge
 from .services.tr_bridge_client import TradeRepublicBridgeError
 from .services.encryption_service import EncryptionService
 from django.http import JsonResponse
-from django.utils.safestring import mark_safe
 import json
 from decimal import Decimal
 
@@ -906,8 +907,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
             "values": category_values,
             "parents": category_parents,
         },
-        "sankey_data": mark_safe(json.dumps(sankey_data)),
-        "sankey_details": mark_safe(json.dumps(sankey_details)),
+        "sankey_data": sankey_data,
+        "sankey_details": sankey_details,
     }
     return render(request, "finance/dashboard.html", context)
 
@@ -1040,7 +1041,26 @@ def accounts(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def settings_view(request: HttpRequest) -> HttpResponse:
-    return render(request, "finance/settings.html")
+    if request.method == "POST":
+        valid_types = {value for value, _ in TradeRepublicPortfolioSnapshot.PortfolioType.choices}
+        mappings = TradeRepublicSubAccountMapping.objects.filter(owner=request.user)
+        for mapping in mappings:
+            new_type = request.POST.get(f"portfolio_type_{mapping.id}", "").strip()
+            if new_type in valid_types and new_type != mapping.portfolio_type:
+                mapping.portfolio_type = new_type
+                mapping.save(update_fields=["portfolio_type", "updated_at"])
+        messages.success(request, "Sous-comptes Trade Republic mis à jour.")
+        return redirect("settings")
+
+    tr_subaccounts = TradeRepublicSubAccountMapping.objects.filter(owner=request.user).order_by("external_account_id")
+    return render(
+        request,
+        "finance/settings.html",
+        {
+            "tr_subaccounts": tr_subaccounts,
+            "tr_portfolio_types": TradeRepublicPortfolioSnapshot.PortfolioType.choices,
+        },
+    )
 
 
 @login_required
@@ -2237,7 +2257,7 @@ def invitation_list(request: HttpRequest) -> HttpResponse:
 
 @_superuser_required
 def invitation_create(request: HttpRequest) -> HttpResponse:
-    """Crée un nouveau token d'invitation (superuser uniquement)."""
+    """Crée un nouveau token d'invitation et envoie l'email si possible."""
     if request.method == "POST":
         email = request.POST.get("email", "").strip()
         days = int(request.POST.get("expires_days", 7) or 7)
@@ -2247,7 +2267,47 @@ def invitation_create(request: HttpRequest) -> HttpResponse:
             email=email,
             expires_at=expires_at,
         )
-        messages.success(request, f"Invitation créée. Lien valide {days} jours.")
+
+        invite_url = request.build_absolute_uri(
+            reverse("register_with_invitation", args=[str(invitation.token)])
+        )
+
+        # Envoi email si destinataire renseigné et SMTP configuré
+        email_sent = False
+        if email:
+            from django.core.mail import send_mail, BadHeaderError
+            from django.conf import settings as _settings
+            subject = "Invitation à rejoindre Finance"
+            body = (
+                f"Bonjour,\n\n"
+                f"Vous avez été invité(e) à créer un compte sur l'application Finance.\n\n"
+                f"Cliquez sur le lien ci-dessous pour créer votre compte :\n"
+                f"{invite_url}\n\n"
+                f"Ce lien est valide {days} jour{'s' if days > 1 else ''}.\n\n"
+                f"— {request.user.username}"
+            )
+            try:
+                send_mail(
+                    subject=subject,
+                    message=body,
+                    from_email=_settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[email],
+                    fail_silently=False,
+                )
+                email_sent = True
+            except BadHeaderError:
+                messages.error(request, "Erreur : en-tête email invalide.")
+            except Exception as exc:
+                messages.warning(request, f"Invitation créée mais email non envoyé : {exc}")
+
+        if email_sent:
+            messages.success(request, f"Invitation créée et email envoyé à {email}. Lien valide {days} jour{'s' if days > 1 else ''}.")
+        elif email:
+            # Email renseigné mais envoi échoué — afficher le lien manuellement
+            messages.info(request, f"Invitation créée. Lien à transmettre manuellement : {invite_url}")
+        else:
+            messages.success(request, f"Invitation créée. Lien valide {days} jour{'s' if days > 1 else ''}.")
+
         return redirect("invitation_list")
     return render(request, "finance/invitation_create.html")
 
@@ -2265,14 +2325,18 @@ def invitation_delete(request: HttpRequest, token: str) -> HttpResponse:
     return redirect("invitation_list")
 
 
+@ensure_csrf_cookie
 def register_with_invitation(request: HttpRequest, token: str) -> HttpResponse:
     """Page d'inscription via token d'invitation."""
     from django.contrib.auth import login, get_user_model
-    from django.contrib.auth.forms import SetPasswordForm
 
     User = get_user_model()
 
-    invitation = get_object_or_404(InvitationToken, token=token)
+    try:
+        invitation = InvitationToken.objects.get(token=token)
+    except InvitationToken.DoesNotExist:
+        return render(request, "finance/invitation_invalid.html", {"invitation": None})
+
     if not invitation.is_valid:
         return render(request, "finance/invitation_invalid.html", {"invitation": invitation})
 
@@ -2286,24 +2350,579 @@ def register_with_invitation(request: HttpRequest, token: str) -> HttpResponse:
             error = "Le nom d'utilisateur est requis."
         elif User.objects.filter(username=username).exists():
             error = "Ce nom d'utilisateur est déjà pris."
-        elif len(password1) < 8:
-            error = "Le mot de passe doit contenir au moins 8 caractères."
+        elif not __import__("re").match(r'^[\w.@+-]+$', username):
+            error = "Nom d'utilisateur invalide. Utilisez uniquement des lettres, chiffres et @/./+/-/_"
         elif password1 != password2:
             error = "Les mots de passe ne correspondent pas."
         else:
-            user = User.objects.create_user(
-                username=username,
-                password=password1,
-                email=invitation.email or "",
-            )
-            invitation.used_at = timezone.now()
-            invitation.used_by = user
-            invitation.save(update_fields=["used_at", "used_by"])
-            login(request, user)
-            messages.success(request, f"Bienvenue, {username} ! Votre compte a été créé.")
-            return redirect("/")
+            from django.contrib.auth.password_validation import validate_password
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            temp_user = User(username=username, email=invitation.email or "")
+            try:
+                validate_password(password1, user=temp_user)
+            except DjangoValidationError as exc:
+                error = " ".join(exc.messages)
+            else:
+                user = User.objects.create_user(
+                    username=username,
+                    password=password1,
+                    email=invitation.email or "",
+                )
+                invitation.used_at = timezone.now()
+                invitation.used_by = user
+                invitation.save(update_fields=["used_at", "used_by"])
+                login(request, user)
+                messages.success(request, f"Bienvenue, {username} ! Votre compte a été créé.")
+                return redirect("/")
 
     return render(request, "finance/register.html", {
         "invitation": invitation,
         "error": error,
     })
+
+
+# ============================================================================
+# Gestion des utilisateurs (superuser uniquement)
+# ============================================================================
+
+
+@_superuser_required
+def user_list(request: HttpRequest) -> HttpResponse:
+    """Liste tous les utilisateurs avec leurs statistiques."""
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    users = User.objects.all().order_by("date_joined")
+    user_data = []
+    for u in users:
+        account_count = Account.objects.filter(owner=u).count()
+        connection_count = BankConnection.objects.filter(owner=u).count()
+        user_data.append({
+            "user": u,
+            "account_count": account_count,
+            "connection_count": connection_count,
+        })
+
+    # Mot de passe temporaire généré et affiché une seule fois (via session)
+    temp_password_info = request.session.pop("temp_password_info", None)
+
+    return render(request, "finance/user_list.html", {
+        "user_data": user_data,
+        "temp_password_info": temp_password_info,
+    })
+
+
+@_superuser_required
+def user_reset_password(request: HttpRequest, user_id: int) -> HttpResponse:
+    """Génère un nouveau mot de passe temporaire pour un utilisateur."""
+    from django.contrib.auth import get_user_model
+    import secrets, string
+    User = get_user_model()
+
+    if request.method != "POST":
+        return redirect("user_list")
+
+    try:
+        target_user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        messages.error(request, "Utilisateur introuvable.")
+        return redirect("user_list")
+
+    if target_user == request.user:
+        messages.error(request, "Utilisez les paramètres Django pour changer votre propre mot de passe.")
+        return redirect("user_list")
+
+    # Générer un mot de passe temporaire sécurisé (12 chars)
+    alphabet = string.ascii_letters + string.digits + "!@#$%"
+    new_password = "".join(secrets.choice(alphabet) for _ in range(12))
+    target_user.set_password(new_password)
+    target_user.save()
+
+    # Stocker dans la session pour affichage one-shot
+    request.session["temp_password_info"] = {
+        "username": target_user.username,
+        "password": new_password,
+    }
+    messages.success(request, f"Mot de passe de {target_user.username} réinitialisé.")
+    return redirect("user_list")
+
+
+@_superuser_required
+def user_delete(request: HttpRequest, user_id: int) -> HttpResponse:
+    """Supprime un utilisateur et toutes ses données."""
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    if request.method != "POST":
+        return redirect("user_list")
+
+    try:
+        target_user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        messages.error(request, "Utilisateur introuvable.")
+        return redirect("user_list")
+
+    if target_user == request.user:
+        messages.error(request, "Vous ne pouvez pas supprimer votre propre compte.")
+        return redirect("user_list")
+
+    username = target_user.username
+    target_user.delete()
+    messages.success(request, f"Le compte '{username}' et toutes ses données ont été supprimés.")
+    return redirect("user_list")
+
+
+@_superuser_required
+def user_toggle_active(request: HttpRequest, user_id: int) -> HttpResponse:
+    """Active ou désactive un compte utilisateur."""
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    if request.method != "POST":
+        return redirect("user_list")
+
+    try:
+        target_user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        messages.error(request, "Utilisateur introuvable.")
+        return redirect("user_list")
+
+    if target_user == request.user:
+        messages.error(request, "Vous ne pouvez pas désactiver votre propre compte.")
+        return redirect("user_list")
+
+    target_user.is_active = not target_user.is_active
+    target_user.save(update_fields=["is_active"])
+    status = "activé" if target_user.is_active else "désactivé"
+    messages.success(request, f"Le compte '{target_user.username}' a été {status}.")
+    return redirect("user_list")
+
+
+@_superuser_required
+def user_toggle_superuser(request: HttpRequest, user_id: int) -> HttpResponse:
+    """Accorde ou retire les droits superuser à un utilisateur."""
+    from django.contrib.auth import get_user_model
+    User = get_user_model()
+
+    if request.method != "POST":
+        return redirect("user_list")
+
+    try:
+        target_user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        messages.error(request, "Utilisateur introuvable.")
+        return redirect("user_list")
+
+    if target_user == request.user:
+        messages.error(request, "Vous ne pouvez pas modifier vos propres droits admin.")
+        return redirect("user_list")
+
+    target_user.is_superuser = not target_user.is_superuser
+    target_user.is_staff = target_user.is_superuser
+    target_user.save(update_fields=["is_superuser", "is_staff"])
+    status = "promu administrateur" if target_user.is_superuser else "rétrogradé utilisateur"
+    messages.success(request, f"'{target_user.username}' a été {status}.")
+    return redirect("user_list")
+
+
+# ============================================================================
+# TRI (XIRR) — calcul de rentabilité
+# ============================================================================
+
+
+@login_required
+def api_investment_tri(request: HttpRequest) -> JsonResponse:
+    """
+    Calcule le TRI (XIRR annualisé) du portefeuille sur une période donnée.
+
+    Query params:
+        period : since_inception | ytd | 1y | custom
+        date_start : YYYY-MM-DD  (obligatoire si period=custom)
+        date_end   : YYYY-MM-DD  (optionnel, défaut = aujourd'hui)
+    """
+    from .xirr import xirr as compute_xirr
+
+    today = date.today()
+    period = request.GET.get("period", "since_inception")
+
+    if period == "ytd":
+        period_start: date | None = date(today.year, 1, 1)
+        period_end = today
+    elif period == "1y":
+        period_start = today - relativedelta(years=1)
+        period_end = today
+    elif period == "custom":
+        try:
+            period_start = date.fromisoformat(request.GET.get("date_start", ""))
+            period_end_str = request.GET.get("date_end", str(today))
+            period_end = date.fromisoformat(period_end_str)
+        except ValueError:
+            return JsonResponse({"error": "Dates invalides (format attendu : YYYY-MM-DD)"}, status=400)
+    else:
+        period_start = None
+        period_end = today
+
+    def _daily_snapshots(qs):
+        """Déduplique par jour calendaire (garde le snapshot le plus récent par jour)."""
+        daily: dict[date, object] = {}
+        for snap in qs:
+            d = snap.source_timestamp.date()
+            daily[d] = snap
+        return sorted(daily.items())
+
+    def _deposit_cash_flows_from_transactions(accounts, date_from, date_to):
+        """
+        Construit les flux de trésorerie réels (dépôts externes) à partir des transactions.
+
+        Méthode : les ventes d'actifs ont la même description que les achats correspondants
+        (ex. "MSCI World UCITS ETF"). On exclut les transactions positives dont la description
+        apparaît aussi dans les transactions négatives → ne reste que les vrais dépôts externes.
+        """
+        flows: list[tuple[date, float]] = []
+        for account in accounts:
+            sell_descriptions = set(
+                Transaction.objects.filter(account=account, amount__lt=0)
+                .values_list("description", flat=True)
+                .distinct()
+            )
+            qs = Transaction.objects.filter(
+                account=account,
+                amount__gt=0,
+                posted_at__date__lte=date_to,
+            )
+            if date_from:
+                qs = qs.filter(posted_at__date__gte=date_from)
+            qs = qs.exclude(description__in=sell_descriptions).order_by("posted_at")
+            for tx in qs:
+                flows.append((tx.posted_at.date(), -float(tx.amount)))
+        return flows
+
+    def _get_terminal_value_global(period_end):
+        snap = (
+            TradeRepublicValuationSnapshot.objects.filter(
+                owner=request.user,
+                auth_status=TradeRepublicValuationSnapshot.AuthStatus.AUTHENTICATED,
+                source_timestamp__date__lte=period_end,
+            )
+            .order_by("-source_timestamp", "-id")
+            .first()
+        )
+        if not snap:
+            return None, 0.0
+        return snap, float(snap.total_with_cash or snap.positions_total or 0)
+
+    def _build_global_cash_flows(period_start, period_end):
+        inv_accounts = list(
+            Account.objects.filter(
+                owner=request.user,
+                include_in_dashboard=True,
+            ).filter(Q(provider="traderepublic") | Q(type=Account.AccountType.BROKER))
+        )
+
+        last_snap, terminal = _get_terminal_value_global(period_end)
+        if terminal <= 0:
+            return []
+
+        cash_flows: list[tuple[date, float]] = []
+
+        if period_start is None:
+            # Depuis le début : vrais dépôts depuis les transactions
+            cash_flows = _deposit_cash_flows_from_transactions(inv_accounts, None, period_end)
+        else:
+            base_snap_qs = TradeRepublicValuationSnapshot.objects.filter(
+                owner=request.user,
+                auth_status=TradeRepublicValuationSnapshot.AuthStatus.AUTHENTICATED,
+            ).order_by("source_timestamp", "id")
+
+            pre_snap = (
+                base_snap_qs.filter(source_timestamp__date__lt=period_start)
+                .order_by("-source_timestamp", "-id")
+                .first()
+            )
+
+            if pre_snap:
+                # On a un snapshot avant la période : valeur initiale connue + dépôts réels durant la période
+                v_start = float(pre_snap.total_with_cash or pre_snap.positions_total or 0)
+                if v_start > 0:
+                    cash_flows.append((period_start, -v_start))
+                period_deposits = _deposit_cash_flows_from_transactions(inv_accounts, period_start, period_end)
+                cash_flows.extend(period_deposits)
+            else:
+                # Pas de snapshot avant la période (ex. YTD quand les snapshots commencent en avril)
+                # On cherche le premier snapshot disponible DANS la période comme ancre
+                first_in_period = (
+                    base_snap_qs.filter(
+                        source_timestamp__date__gte=period_start,
+                        source_timestamp__date__lte=period_end,
+                    )
+                    .order_by("source_timestamp", "id")
+                    .first()
+                )
+                if first_in_period:
+                    effective_start = first_in_period.source_timestamp.date()
+                    v_start = float(first_in_period.total_with_cash or first_in_period.positions_total or 0)
+                    if v_start > 0:
+                        cash_flows.append((effective_start, -v_start))
+                    # Dépôts uniquement APRÈS cette ancre (evite de double-compter ce qui est dans v_start)
+                    period_deposits = _deposit_cash_flows_from_transactions(inv_accounts, effective_start, period_end)
+                    # Exclure le jour du premier snapshot lui-même (déjà dans v_start)
+                    cash_flows.extend((d, a) for d, a in period_deposits if d > effective_start)
+                else:
+                    # Aucun snapshot disponible pour cette période
+                    return []
+
+        cash_flows.append((period_end, terminal))
+        return cash_flows
+
+    def _build_type_cash_flows(portfolio_type: str, period_start, period_end):
+        # Important : cette méthode détecte les dépôts via les variations d'invested_total
+        # d'un snapshot à l'autre. Cette donnée n'existe que côté bridge_auto (le bridge TR
+        # la fournit) — les snapshots manuels (sans cette info, invested_total=0) fausseraient
+        # gravement les deltas si on les mélangeait (ex. saut artificiel de 0 à 7000€ détecté
+        # comme un "dépôt"). On se limite donc aux snapshots bridge_auto pour ce calcul.
+        base_qs = TradeRepublicPortfolioSnapshot.objects.filter(
+            snapshot__owner=request.user,
+            snapshot__source=TradeRepublicValuationSnapshot.Source.BRIDGE_AUTO,
+            snapshot__auth_status=TradeRepublicValuationSnapshot.AuthStatus.AUTHENTICATED,
+            portfolio_type=portfolio_type,
+            account_snapshot__isnull=True,
+        ).select_related("snapshot").order_by("snapshot__source_timestamp", "snapshot__id")
+
+        in_period_qs = base_qs.filter(snapshot__source_timestamp__date__lte=period_end)
+        if period_start:
+            in_period_qs = in_period_qs.filter(snapshot__source_timestamp__date__gte=period_start)
+
+        if period_start:
+            pre_snap = (
+                base_qs.filter(snapshot__source_timestamp__date__lt=period_start)
+                .order_by("-snapshot__source_timestamp", "-snapshot__id")
+                .first()
+            )
+        else:
+            pre_snap = None
+
+        # Déduplique par jour (uses snapshot source_timestamp)
+        daily: dict[date, object] = {}
+        for ps in in_period_qs:
+            d = ps.snapshot.source_timestamp.date()
+            daily[d] = ps
+        sorted_daily = sorted(daily.items())
+
+        if not sorted_daily:
+            return []
+
+        cash_flows: list[tuple[date, float]] = []
+
+        if pre_snap:
+            v_start = float(pre_snap.current_value or 0)
+            if v_start > 0:
+                cash_flows.append((period_start, -v_start))
+            prev_invested = float(pre_snap.invested_total or 0)
+            anchor_day = period_start
+        else:
+            # Pas de snapshot avant la période : on ancre sur le premier snapshot
+            # disponible DANS la période (ex. snapshots manuels sans invested_total —
+            # leur valeur courante sert alors de point de départ, comme pour le global).
+            anchor_day, anchor_ps = sorted_daily[0]
+            v_start = float(anchor_ps.current_value or 0)
+            if v_start > 0:
+                cash_flows.append((anchor_day, -v_start))
+            prev_invested = float(anchor_ps.invested_total or 0)
+
+        for day, ps in sorted_daily:
+            if day <= anchor_day:
+                continue
+            invested = float(ps.invested_total or 0)
+            delta = invested - prev_invested
+            if delta > 0.5:
+                cash_flows.append((day, -delta))
+            prev_invested = invested
+
+        last_day, last_ps = sorted_daily[-1]
+        terminal = float(last_ps.current_value or 0)
+        if terminal > 0:
+            cash_flows.append((period_end, terminal))
+
+        return cash_flows
+
+    def _build_account_cash_flows(account, period_start, period_end):
+        # Terminal value : dernier snapshot pour ce compte
+        acc_snap_qs = TradeRepublicValuationSnapshot.objects.filter(
+            owner=request.user,
+            account=account,
+            auth_status=TradeRepublicValuationSnapshot.AuthStatus.AUTHENTICATED,
+        ).order_by("source_timestamp", "id")
+
+        last_snap = acc_snap_qs.filter(source_timestamp__date__lte=period_end).order_by("-source_timestamp", "-id").first()
+
+        # Fallback : snapshot global si pas de snapshot par compte
+        if not last_snap:
+            last_snap, terminal = _get_terminal_value_global(period_end)
+        else:
+            terminal = float(last_snap.total_with_cash or last_snap.positions_total or 0)
+
+        if terminal <= 0:
+            return []
+
+        cash_flows: list[tuple[date, float]] = []
+
+        if period_start is None:
+            cash_flows = _deposit_cash_flows_from_transactions([account], None, period_end)
+        else:
+            pre_snap = (
+                acc_snap_qs.filter(source_timestamp__date__lt=period_start)
+                .order_by("-source_timestamp", "-id")
+                .first()
+            )
+            if pre_snap:
+                v_start = float(pre_snap.total_with_cash or pre_snap.positions_total or 0)
+                if v_start > 0:
+                    cash_flows.append((period_start, -v_start))
+                period_deposits = _deposit_cash_flows_from_transactions([account], period_start, period_end)
+                cash_flows.extend(period_deposits)
+            else:
+                first_in_period = (
+                    acc_snap_qs.filter(
+                        source_timestamp__date__gte=period_start,
+                        source_timestamp__date__lte=period_end,
+                    )
+                    .order_by("source_timestamp", "id")
+                    .first()
+                )
+                if first_in_period:
+                    effective_start = first_in_period.source_timestamp.date()
+                    v_start = float(first_in_period.total_with_cash or first_in_period.positions_total or 0)
+                    if v_start > 0:
+                        cash_flows.append((effective_start, -v_start))
+                    period_deposits = _deposit_cash_flows_from_transactions([account], effective_start, period_end)
+                    cash_flows.extend((d, a) for d, a in period_deposits if d > effective_start)
+                else:
+                    return []
+
+        cash_flows.append((period_end, terminal))
+        return cash_flows
+
+    def _segment_days(flows) -> int | None:
+        """Durée réelle (en jours) couverte par les flux d'un segment (premier décaissement → dernier flux)."""
+        if not flows:
+            return None
+        outflows = [d for d, a in flows if a < 0]
+        if not outflows:
+            return None
+        start = min(outflows)
+        end = max(d for d, _ in flows)
+        days = (end - start).days
+        return days or None
+
+    def _pct(rate: float) -> str:
+        pct = rate * 100
+        sign = "+" if pct >= 0 else ""
+        return f"{sign}{pct:.2f}%"
+
+    def _fmt(rate: float | None, days: int | None = None) -> dict:
+        """
+        Formate un taux XIRR (toujours annualisé par construction).
+
+        En plus du taux annualisé, calcule le "rendement sur la période" en
+        désannualisant : period_rate = (1 + rate)^(jours/365) - 1. C'est la
+        performance réellement vécue sur la durée exacte du segment, sans la
+        distorsion qu'introduit la projection sur 12 mois pour les courtes
+        périodes (ex. -4.8% sur 6 semaines plutôt que -34.8% "annualisé").
+        """
+        if rate is None:
+            return {
+                "rate": None, "display": "N/D",
+                "period_rate": None, "period_display": "N/D",
+                "period_days": days,
+            }
+        result = {"rate": round(rate, 6), "display": _pct(rate), "period_days": days}
+        if days and days > 0:
+            period_rate = (1.0 + rate) ** (days / 365.0) - 1.0
+            result["period_rate"] = round(period_rate, 6)
+            result["period_display"] = _pct(period_rate)
+        else:
+            result["period_rate"] = None
+            result["period_display"] = None
+        return result
+
+    # --- TRI global ---
+    global_flows = _build_global_cash_flows(period_start, period_end)
+    global_tri = compute_xirr(global_flows)
+    global_days = _segment_days(global_flows)
+
+    # --- Durée effective : date réelle du premier flux (peut différer de period_start si pas de snapshot) ---
+    effective_start: date | None = None
+    if global_flows:
+        outflows = [d for d, a in global_flows if a < 0]
+        if outflows:
+            effective_start = min(outflows)
+    history_days: int | None = (period_end - effective_start).days if effective_start else None
+
+    # --- TRI par type de portefeuille ---
+    known_types = (
+        TradeRepublicPortfolioSnapshot.objects.filter(
+            snapshot__owner=request.user,
+            snapshot__auth_status=TradeRepublicValuationSnapshot.AuthStatus.AUTHENTICATED,
+            account_snapshot__isnull=True,
+        )
+        .values_list("portfolio_type", flat=True)
+        .distinct()
+    )
+
+    by_type: dict[str, dict] = {}
+    for ptype in known_types:
+        flows = _build_type_cash_flows(ptype, period_start, period_end)
+        by_type[ptype] = _fmt(compute_xirr(flows), _segment_days(flows))
+
+    # --- TRI par compte broker ---
+    investment_accounts = Account.objects.filter(
+        owner=request.user,
+        include_in_dashboard=True,
+    ).filter(Q(provider="traderepublic") | Q(type=Account.AccountType.BROKER))
+
+    by_account: dict[str, dict] = {}
+    for account in investment_accounts:
+        flows = _build_account_cash_flows(account, period_start, period_end)
+        tri = compute_xirr(flows)
+        by_account[str(account.id)] = {
+            "name": account.name,
+            **_fmt(tri, _segment_days(flows)),
+        }
+
+    # Faut-il mettre en avant le rendement annualisé ou le rendement « brut » sur la période ?
+    # Annualiser n'a vraiment de sens que pour des durées proches d'un an ou plus ;
+    # en dessous, on privilégie le rendement réel sur la période (moins trompeur).
+    emphasize_annualized = bool(global_days and global_days >= 330)
+
+    return JsonResponse({
+        "period": period,
+        "period_start": period_start.isoformat() if period_start else None,
+        "effective_period_start": effective_start.isoformat() if effective_start else None,
+        "period_end": period_end.isoformat(),
+        "history_days": history_days,
+        "emphasize_annualized": emphasize_annualized,
+        "global": _fmt(global_tri, global_days),
+        "by_type": by_type,
+        "by_account": by_account,
+    })
+
+
+# ============================================================================
+# Pages d'erreur personnalisées
+# ============================================================================
+
+
+def error_400(request: HttpRequest, exception=None) -> HttpResponse:
+    return render(request, "errors/400.html", status=400)
+
+
+def error_403(request: HttpRequest, exception=None) -> HttpResponse:
+    return render(request, "errors/403.html", status=403)
+
+
+def error_404(request: HttpRequest, exception=None) -> HttpResponse:
+    return render(request, "errors/404.html", status=404)
+
+
+def error_500(request: HttpRequest) -> HttpResponse:
+    return render(request, "errors/500.html", status=500)

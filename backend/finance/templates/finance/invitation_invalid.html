@@ -15,7 +15,9 @@
           </svg>
         </div>
         <h1 class="text-2xl font-bold text-gray-900 mb-2">Lien invalide</h1>
-        {% if invitation.is_used %}
+        {% if not invitation %}
+          <p class="text-gray-500 text-sm">Ce lien d'invitation n'existe pas ou a été supprimé. Demandez un nouveau lien à l'administrateur.</p>
+        {% elif invitation.is_used %}
           <p class="text-gray-500 text-sm">Ce lien d'invitation a déjà été utilisé pour créer un compte.</p>
         {% elif invitation.is_expired %}
           <p class="text-gray-500 text-sm">Ce lien d'invitation a expiré. Demandez un nouveau lien à l'administrateur.</p>

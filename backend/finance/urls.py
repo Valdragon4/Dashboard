@@ -14,6 +14,7 @@ urlpatterns = [
     path("reset/user", views.reset_user_finance, name="reset_user_finance"),
     path("settings/", views.settings_view, name="settings"),
     path("api/investments/update-valuation", views.update_investment_valuation, name="update_investment_valuation"),
+    path("api/investments/tri/", views.api_investment_tri, name="api_investment_tri"),
     path("api/accounts/<int:account_id>/toggle-dashboard", views.toggle_account_in_dashboard, name="toggle_account_in_dashboard"),
     path("api/transactions/<int:transaction_id>/update-category", views.update_transaction_category, name="update_transaction_category"),
     # API pour synchronisation manuelle depuis la liste des comptes (Story 1.9)
@@ -30,11 +31,17 @@ urlpatterns = [
     path("bank-connections/logs/<int:log_id>/", views.sync_log_detail, name="sync_log_detail"),
     path("bank-connections/logs/export/", views.sync_logs_export, name="sync_logs_export"),
     # Gestion des invitations utilisateur (superuser uniquement)
-    path("admin/invitations/", views.invitation_list, name="invitation_list"),
-    path("admin/invitations/new/", views.invitation_create, name="invitation_create"),
-    path("admin/invitations/<uuid:token>/delete/", views.invitation_delete, name="invitation_delete"),
+    path("users/invitations/", views.invitation_list, name="invitation_list"),
+    path("users/invitations/new/", views.invitation_create, name="invitation_create"),
+    path("users/invitations/<uuid:token>/delete/", views.invitation_delete, name="invitation_delete"),
     # Inscription via invitation (public)
     path("invite/<uuid:token>/", views.register_with_invitation, name="register_with_invitation"),
+    # Gestion des utilisateurs (superuser uniquement)
+    path("users/", views.user_list, name="user_list"),
+    path("users/<int:user_id>/reset-password/", views.user_reset_password, name="user_reset_password"),
+    path("users/<int:user_id>/delete/", views.user_delete, name="user_delete"),
+    path("users/<int:user_id>/toggle-active/", views.user_toggle_active, name="user_toggle_active"),
+    path("users/<int:user_id>/toggle-superuser/", views.user_toggle_superuser, name="user_toggle_superuser"),
 ]
 
 
