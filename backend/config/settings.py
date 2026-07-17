@@ -88,6 +88,14 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_ACCEPT_CONTENT = ["json"]
 
+# Garde-temps des tâches : empêche qu'une sync bancaire figée (ex. appel Playwright
+# BoursoBank bloqué) n'immobilise un slot worker indéfiniment (cf. incident "sync en
+# cours depuis 3 jours"). Le soft limit lève SoftTimeLimitExceeded (attrapé par
+# SyncService.sync_account -> SyncLog finalisé en ERROR) ; le hard limit est le
+# backstop SIGKILL si le soft n'interrompt pas un appel natif bloqué.
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "600"))
+CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "660"))
+
 from celery.schedules import crontab  # noqa: E402
 
 CELERY_BEAT_SCHEDULE = {
