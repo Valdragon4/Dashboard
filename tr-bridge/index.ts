@@ -401,7 +401,9 @@ function computeCostBasisFromPortfolio(portfolio: Portfolio): number {
  * et tue le process (exit 1) AVANT que le flow needs_manual_auth ne s'exécute.
  * On neutralise donc uniquement ce bruit WS ; tout le reste crashe normalement.
  */
-function isOrphanWebSocketError(err: unknown): boolean {
+function isOrphanWebSocketError(err: unknown, depth = 0): boolean {
+  if (depth > 5 || err == null) return false;
+
   const message =
     err instanceof Error
       ? err.message
@@ -409,12 +411,30 @@ function isOrphanWebSocketError(err: unknown): boolean {
         ? ((err as { message: string }).message)
         : String(err ?? "");
   const type = isObject(err) ? (err as { type?: unknown }).type : undefined;
-  return (
+  const code = isObject(err) ? (err as { code?: unknown }).code : undefined;
+
+  if (
     type === "error" || // ws ErrorEvent (isTrusted/type)
+    code === "ERR_UNHANDLED_ERROR" || // EventEmitter 'error' sans listener (emitError)
     /Expected 101 status code/i.test(message) ||
     /WebSocket connection to .* failed/i.test(message) ||
     /Invalid WebSocket frame/i.test(message)
-  );
+  ) {
+    return true;
+  }
+
+  // Node emballe un 'error' event orphelin en `ERR_UNHANDLED_ERROR` dont le
+  // vrai ErrorEvent (« Expected 101… ») est planqué dans `.context` (parfois
+  // `.cause` / `.error`). On déroule ces niveaux imbriqués.
+  if (isObject(err)) {
+    for (const key of ["context", "cause", "error"] as const) {
+      const nested = (err as Record<string, unknown>)[key];
+      if (nested != null && nested !== err && isOrphanWebSocketError(nested, depth + 1)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 async function main() {
