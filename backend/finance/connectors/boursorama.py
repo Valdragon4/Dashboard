@@ -204,7 +204,7 @@ class BoursoBankConnector(BaseBankConnector):
             return []
 
         self._selected_account = bourso_account
-        transactions = self._fetch_transactions_via_api(bourso_account)
+        transactions = self._fetch_transactions_via_api(bourso_account, since=since)
         before_pending_filter = len(transactions)
         transactions = [tx for tx in transactions if not _is_pending_transaction(tx)]
         pending_skipped = before_pending_filter - len(transactions)
@@ -458,7 +458,9 @@ class BoursoBankConnector(BaseBankConnector):
     # Transactions via interception réseau + fallback DOM
     # ------------------------------------------------------------------
 
-    def _fetch_transactions_via_api(self, bourso_account: "BoursoAccount") -> List[Dict]:
+    def _fetch_transactions_via_api(
+        self, bourso_account: "BoursoAccount", since: Optional[datetime] = None
+    ) -> List[Dict]:
         page = getattr(self._scraper, "page", None) if self._scraper else None
         if not page:
             logger.warning("BoursoBank: page indisponible")
@@ -604,7 +606,7 @@ class BoursoBankConnector(BaseBankConnector):
             return state_tx
 
         logger.info("BoursoBank: 0 interception reseau, fallback DOM")
-        return self._scrape_visible_transactions()
+        return self._scrape_visible_transactions(since=since)
 
     def _extract_transactions_from_page_state(self, page) -> List[Dict]:
         """Extrait des operations depuis les objets JS embarques (Next/Redux/etc.)."""
@@ -697,16 +699,53 @@ class BoursoBankConnector(BaseBankConnector):
 
         logger.info("BoursoBank: page apres navigation: %s", page.url)
 
-    def _scrape_visible_transactions(self) -> List[Dict]:
+    def _scrape_visible_transactions(self, since: Optional[datetime] = None) -> List[Dict]:
         page = getattr(self._scraper, "page", None) if self._scraper else None
         if not page:
             return []
+
+        # Arret anticipe: on sync souvent, inutile de remonter tout l'historique.
+        # Des que la plus vieille operation chargee est anterieure a `since` (moins
+        # une marge de securite pour les operations postees en retard), on stoppe.
+        since_cutoff = None
+        if since is not None:
+            since_cutoff = since
+            if timezone.is_naive(since_cutoff):
+                since_cutoff = timezone.make_aware(
+                    since_cutoff, timezone.get_current_timezone()
+                )
+            margin_days = int(getattr(settings, "BOURSOBANK_SINCE_MARGIN_DAYS", 3))
+            since_cutoff = since_cutoff - timedelta(days=margin_days)
+
+        def _oldest_loaded_date():
+            """Date de la plus ancienne operation actuellement chargee (ou None)."""
+            try:
+                raw = page.evaluate(
+                    "() => { const it = document.querySelectorAll('li.list-operation-item');"
+                    " if (!it.length) return '';"
+                    " return it[it.length - 1].getAttribute('data-id') || ''; }"
+                ) or ""
+            except Exception:
+                return None
+            decoded = _decode_dom_data_id(raw)
+            return _parse_french_date(decoded.get("d") or "")
 
         # Pagination client-side: le bouton "Mouvements precedents" charge plus
         # d'operations sans changer d'URL.
         max_clicks = int(getattr(settings, "BOURSOBANK_MAX_PREVIOUS_CLICKS", 160))
         for idx in range(max_clicks):
             try:
+                # Deja assez remonte dans le passe ? on arrete sans cliquer plus.
+                if since_cutoff is not None:
+                    oldest = _oldest_loaded_date()
+                    if oldest is not None and oldest < since_cutoff:
+                        logger.info(
+                            "BoursoBank: arret pagination anticipe "
+                            "(plus vieille op=%s < seuil since=%s)",
+                            oldest.date(), since_cutoff.date(),
+                        )
+                        break
+
                 before_count = page.evaluate(
                     "() => document.querySelectorAll('li.list-operation-item').length"
                 ) or 0

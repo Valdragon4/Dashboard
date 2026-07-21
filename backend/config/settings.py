@@ -109,6 +109,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "finance.tasks.cleanup_old_sync_logs",
         "schedule": crontab(hour=1, minute=0),
     },
+    # Réconcilie les runs orphelins (STARTED figé après SIGKILL) toutes les 15 min
+    "reconcile-stale-sync-logs": {
+        "task": "finance.tasks.reconcile_stale_sync_logs",
+        "schedule": crontab(minute="*/15"),
+    },
 }
 
 _cors_env = os.getenv("DJANGO_CORS_ALLOWED_ORIGINS", "").strip()
@@ -216,6 +221,11 @@ BOURSOBANK_HEADLESS = os.getenv("BOURSOBANK_HEADLESS", "1") == "1"
 BOURSOBANK_DATA_DIR = os.getenv("BOURSOBANK_DATA_DIR", str(BASE_DIR / "boursobank-data"))
 BOURSOBANK_PROXY = os.getenv("BOURSOBANK_PROXY", "")
 BOURSOBANK_ACCOUNT_NUMBER = os.getenv("BOURSOBANK_ACCOUNT_NUMBER", "")
+# Nombre max de clics "Mouvements précédents" en fallback DOM (garde-fou dur).
+BOURSOBANK_MAX_PREVIOUS_CLICKS = int(os.getenv("BOURSOBANK_MAX_PREVIOUS_CLICKS", "160"))
+# Marge (jours) sous `since` avant d'arrêter la pagination, pour rattraper les
+# opérations postées en retard. Une sync quotidienne ne remonte donc que ~3 jours.
+BOURSOBANK_SINCE_MARGIN_DAYS = int(os.getenv("BOURSOBANK_SINCE_MARGIN_DAYS", "3"))
 
 # Trade Republic Bridge (Bun/TS)
 TR_BRIDGE_ENABLED = os.getenv("TR_BRIDGE_ENABLED", "0") == "1"

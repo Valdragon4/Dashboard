@@ -200,6 +200,61 @@ def sync_bank_account(account_id: int, sync_type: str = SyncLog.SyncType.AUTOMAT
         raise
 
 
+@shared_task
+def reconcile_stale_sync_logs() -> Dict:
+    """
+    Réconcilie les SyncLog orphelins restés en STARTED.
+
+    Cause racine : lors d'un SIGKILL du worker (redéploiement, redémarrage, ou
+    backstop `CELERY_TASK_TIME_LIMIT`), le bloc `except` de `SyncService.sync_account`
+    ne peut pas s'exécuter — le SyncLog reste donc figé en `started`/`completed_at=NULL`
+    et s'affiche « en cours » indéfiniment (run bloqué), et la BankConnection peut
+    rester en `syncing`.
+
+    Cette tâche (Celery Beat) marque en ERROR tout log STARTED dont `started_at`
+    dépasse largement le hard time_limit, et débloque la connexion associée.
+    """
+    from datetime import timedelta
+
+    from django.conf import settings
+    from django.utils import timezone
+
+    from finance.models import BankConnection
+
+    hard_limit = int(getattr(settings, "CELERY_TASK_TIME_LIMIT", 660))
+    # Marge de sécurité : 2× le hard limit, minimum 15 min, pour ne jamais
+    # toucher un run réellement en cours.
+    threshold = timezone.now() - timedelta(seconds=max(hard_limit * 2, 900))
+
+    stale = SyncLog.objects.filter(
+        status=SyncLog.Status.STARTED,
+        completed_at__isnull=True,
+        started_at__lt=threshold,
+    )
+    conn_ids = list(stale.values_list("bank_connection_id", flat=True).distinct())
+    now = timezone.now()
+    reconciled = stale.update(
+        status=SyncLog.Status.ERROR,
+        completed_at=now,
+        error_message="Sync interrompue (worker redémarré ou crash)",
+    )
+
+    # Débloque les connexions restées en SYNCING à cause du run orphelin.
+    unblocked = BankConnection.objects.filter(
+        id__in=conn_ids, sync_status=BankConnection.SyncStatus.SYNCING
+    ).update(sync_status=BankConnection.SyncStatus.ERROR)
+
+    if reconciled:
+        logger.warning(
+            "Réconciliation: %d SyncLog orphelin(s) marqué(s) en ERROR, "
+            "%d connexion(s) débloquée(s)",
+            reconciled,
+            unblocked,
+        )
+
+    return {"reconciled": reconciled, "connections_unblocked": unblocked}
+
+
 # Tâche existante conservée pour compatibilité
 @shared_task
 def snapshot_networth() -> str:
