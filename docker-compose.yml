@@ -2,6 +2,7 @@ services:
   db:
     image: postgres:16-alpine
     restart: always
+    cpus: 1
     mem_limit: 512m
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-dashboard}
@@ -19,6 +20,7 @@ services:
 
   web:
     build: ./backend
+    cpus: 2
     mem_limit: 1g
     restart: always
     shm_size: '256m'
@@ -43,6 +45,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    cpus: 0.5
     mem_limit: 128m
     restart: always
     ports:
@@ -50,6 +53,7 @@ services:
 
   worker:
     build: ./backend
+    cpus: 1
     mem_limit: 512m
     restart: always
     command: celery -A config worker -l info
@@ -71,6 +75,7 @@ services:
 
   beat:
     build: ./backend
+    cpus: 0.5
     mem_limit: 256m
     restart: always
     command: celery -A config beat -l info
