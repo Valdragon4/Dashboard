@@ -18,6 +18,18 @@ from finance.connectors.base import (
 from finance.models import Account, SyncLog
 from finance.services.sync_service import SyncService
 
+
+def _sync_account(account: Account, sync_type: str) -> Dict:
+    """Trade Republic passe par le bridge (session seule), les autres banques par SyncService."""
+    from finance.services.tr_bridge_sync import (
+        is_tr_bridge_account,
+        sync_tr_bridge_account_scheduled,
+    )
+
+    if is_tr_bridge_account(account):
+        return sync_tr_bridge_account_scheduled(account, sync_type)
+    return SyncService.sync_account(account, sync_type=sync_type)
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,7 +72,7 @@ def sync_all_bank_accounts() -> Dict:
                 f"(provider: {account.bank_connection.provider})"
             )
 
-            result = SyncService.sync_account(account, sync_type=SyncLog.SyncType.AUTOMATIC)
+            result = _sync_account(account, SyncLog.SyncType.AUTOMATIC)
 
             if result["success"]:
                 results["success"] += 1
@@ -150,7 +162,7 @@ def sync_bank_account(account_id: int, sync_type: str = SyncLog.SyncType.AUTOMAT
     )
 
     try:
-        result = SyncService.sync_account(account, sync_type=sync_type)
+        result = _sync_account(account, sync_type)
 
         if result["success"]:
             logger.info(

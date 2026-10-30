@@ -5,6 +5,7 @@ import os
 import time
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
@@ -205,10 +206,13 @@ def sync_bridge_snapshot_for_account(
     account: Account,
     source: str = TradeRepublicValuationSnapshot.Source.BRIDGE_AUTO,
     device_pin: str | None = None,
+    session_only: bool = False,
 ) -> TradeRepublicValuationSnapshot:
     t0 = time.monotonic()
     phone_number, pin = _resolve_trade_republic_credentials(account)
-    payload = fetch_tr_valuation(phone_number=phone_number, pin=pin, device_pin=device_pin)
+    payload = fetch_tr_valuation(
+        phone_number=phone_number, pin=pin, device_pin=device_pin, session_only=session_only
+    )
     import json as _json
     # On logue uniquement le diagnostic pagination (pas le payload complet).
     debug_tx = payload.get("debug_tx_pagination") if isinstance(payload, dict) else None
@@ -403,12 +407,14 @@ def sync_bridge_snapshot_with_auth_handling(
     account: Account,
     source: str = TradeRepublicValuationSnapshot.Source.BRIDGE_AUTO,
     device_pin: str | None = None,
+    session_only: bool = False,
 ) -> TradeRepublicValuationSnapshot:
     try:
         return sync_bridge_snapshot_for_account(
             account=account,
             source=source,
             device_pin=device_pin,
+            session_only=session_only,
         )
     except TradeRepublicBridgeAuthRequired as exc:
         source_timestamp = timezone.now()
@@ -429,3 +435,76 @@ def sync_bridge_snapshot_with_auth_handling(
             status_payload,
         )
         return snapshot
+
+
+def is_tr_bridge_account(account: Account) -> bool:
+    return bool(
+        settings.TR_BRIDGE_ENABLED
+        and account.provider == "traderepublic"
+        and account.type == Account.AccountType.BROKER
+    )
+
+
+def sync_tr_bridge_account_scheduled(account: Account, sync_type: str) -> dict:
+    """
+    Synchro planifiée d'un compte Trade Republic par le bridge, en session seule.
+
+    La connexion v2 exige de valider une notification dans l'appli : la nuit, personne
+    ne le fera. On réutilise donc la session enregistrée par la dernière synchro
+    manuelle, sans jamais déclencher de notification. Renvoie un dict au format de
+    SyncService.sync_account.
+    """
+    from finance.models import SyncLog
+
+    bank_connection = account.bank_connection
+    sync_log = SyncLog.objects.create(
+        bank_connection=bank_connection, sync_type=sync_type, status=SyncLog.Status.STARTED
+    )
+    bank_connection.sync_status = BankConnection.SyncStatus.SYNCING
+    bank_connection.save(update_fields=["sync_status", "updated_at"])
+
+    def _finish(status, conn_status, error="", count=0, **extra):
+        sync_log.status = status
+        sync_log.error_message = error
+        sync_log.transactions_count = count
+        sync_log.completed_at = timezone.now()
+        sync_log.save(update_fields=["status", "error_message", "transactions_count", "completed_at"])
+        bank_connection.sync_status = conn_status
+        fields = ["sync_status", "updated_at"]
+        if status == SyncLog.Status.SUCCESS:
+            bank_connection.last_sync_at = timezone.now()
+            fields.append("last_sync_at")
+        bank_connection.save(update_fields=fields)
+        return {
+            "success": status == SyncLog.Status.SUCCESS,
+            "transactions_count": count,
+            "error": error or None,
+            "sync_log_id": sync_log.id,
+            **extra,
+        }
+
+    try:
+        snapshot = sync_bridge_snapshot_with_auth_handling(account=account, session_only=True)
+    except TradeRepublicBridgeError as exc:
+        logger.warning("tr_bridge_scheduled_failed account_id=%s error=%s", account.id, exc)
+        return _finish(
+            SyncLog.Status.ERROR,
+            BankConnection.SyncStatus.ERROR,
+            error=f"Bridge Trade Republic indisponible: {exc}",
+        )
+
+    if snapshot.auth_status == TradeRepublicValuationSnapshot.AuthStatus.NEEDS_MANUAL_AUTH:
+        return _finish(
+            SyncLog.Status.ERROR,
+            BankConnection.SyncStatus.PENDING,
+            error="Session Trade Republic expirée : lancer une synchro manuelle et valider la notification",
+            requires_2fa=True,
+        )
+
+    count = 0
+    if isinstance(snapshot.raw, dict):
+        try:
+            count = int(snapshot.raw.get("total_items") or 0)
+        except (TypeError, ValueError):
+            count = 0
+    return _finish(SyncLog.Status.SUCCESS, BankConnection.SyncStatus.SUCCESS, count=count)

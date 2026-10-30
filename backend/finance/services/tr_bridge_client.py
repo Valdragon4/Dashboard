@@ -73,6 +73,7 @@ def fetch_tr_valuation(
     phone_number: str,
     pin: str,
     device_pin: str | None = None,
+    session_only: bool = False,
     timeout_seconds: int = 45,
 ) -> dict:
     timeout_seconds = int(
@@ -116,6 +117,8 @@ def fetch_tr_valuation(
     command.extend(["--tx-limit", str(tx_limit), "--max-pages", str(max_pages)])
     if device_pin:
         command.extend(["--device-pin", device_pin.strip()])
+    if session_only:
+        command.append("--session-only")
 
     # Verrou exclusif: Chromium consomme beaucoup de RAM, on évite les lancements parallèles.
     lock_file = open(_BRIDGE_LOCK_FILE, "w")
@@ -199,6 +202,7 @@ def fetch_tr_valuation(
     if bridge_status == "needs_manual_auth" or (
         isinstance(payload, dict) and payload.get("status") == "needs_manual_auth"
     ):
+        logger.warning("tr_bridge_auth_required stderr_tail=%s", stderr[-1500:])
         raise TradeRepublicBridgeAuthRequired("auth_required")
 
     if bridge_status == "rate_limited" or (

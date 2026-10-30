@@ -471,6 +471,9 @@ async function main() {
   const [, , phoneNumber, pin, ...flags] = process.argv;
   const diagnosticsEnabled = flags.includes("--diag");
   const jsonMode = flags.includes("--json");
+  // Synchro planifiée : personne ne peut valider de notification, on n'utilise que
+  // la session enregistrée (rafraîchie au besoin) et on ne tente jamais la connexion complète.
+  const sessionOnly = flags.includes("--session-only");
   const outFileFlagIndex = flags.indexOf("--out-file");
   const outFile =
     outFileFlagIndex >= 0 && outFileFlagIndex < flags.length - 1
@@ -563,7 +566,8 @@ async function main() {
   const logger = {
     debug: (...args: unknown[]) => log(...args),
     info: (...args: unknown[]) => log(...args),
-    warn: (...args: unknown[]) => log(...args),
+    // stderr même en mode JSON : seule trace d'une validation ou d'un rafraîchissement de session raté
+    warn: (...args: unknown[]) => console.error(...args),
     error: (...args: unknown[]) => {
       const text = args.map((a) => (a instanceof Error ? a.message : String(a))).join(" ");
       if (text.startsWith("Login failed:")) loginFailure = text.slice(0, 500);
@@ -587,6 +591,12 @@ async function main() {
   if (typeof apiAny._scheduleReconnect === "function") {
     apiAny._scheduleReconnect = () => {
       /* no-op: reconnexion desactivee */
+    };
+  }
+
+  if (sessionOnly && typeof apiAny._performInitialLoginStep === "function") {
+    apiAny._performInitialLoginStep = async () => {
+      throw new Error("SESSION_ONLY: aucune session réutilisable");
     };
   }
 
@@ -626,6 +636,13 @@ async function main() {
         status: "rate_limited",
         reason: "too_many_requests",
         retry_after_seconds: retryMatch ? parseInt(retryMatch[1], 10) : null,
+        timestamp: new Date().toISOString(),
+      } : undefined);
+    }
+    if (failure.includes("SESSION_ONLY")) {
+      await safeExit(2, jsonMode ? {
+        status: "needs_manual_auth",
+        reason: "session_expired",
         timestamp: new Date().toISOString(),
       } : undefined);
     }
