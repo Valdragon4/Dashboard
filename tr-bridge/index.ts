@@ -1,5 +1,6 @@
+import puppeteer from "puppeteer";
 import { TradeRepublicApi, createMessage, type Portfolio } from "trapi";
-import { existsSync, readFileSync, renameSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
+import { renameSync, writeFileSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { join as joinPath } from "path";
 
@@ -60,8 +61,12 @@ async function subscribeOnceAsync(
   api: TradeRepublicApi,
   message: ReturnType<typeof createMessage>,
 ): Promise<string | null> {
+  // trapi >= 5a33fed rend la réponse déjà décodée : on la ré-sérialise pour garder
+  // une seule forme (chaîne JSON) dans tout le bridge.
   return await new Promise((resolve) => {
-    api.subscribeOnce(message, (data) => resolve(data));
+    api.subscribeOnce(message, (data) =>
+      resolve(data == null ? null : typeof data === "string" ? data : JSON.stringify(data)),
+    );
   });
 }
 
@@ -471,11 +476,6 @@ async function main() {
     outFileFlagIndex >= 0 && outFileFlagIndex < flags.length - 1
       ? (flags[outFileFlagIndex + 1]?.trim() || null)
       : null;
-  const devicePinFlagIndex = flags.indexOf("--device-pin");
-  const devicePin =
-    devicePinFlagIndex >= 0 && devicePinFlagIndex < flags.length - 1
-      ? flags[devicePinFlagIndex + 1]?.trim() || null
-      : null;
   const txLimitFlagIndex = flags.indexOf("--tx-limit");
   const txLimit =
     txLimitFlagIndex >= 0 && txLimitFlagIndex < flags.length - 1
@@ -529,27 +529,61 @@ async function main() {
     process.exit(1);
   }
 
-  // Fichier d'état inter-processus: permet de réutiliser processId + wafToken entre
-  // le premier appel (qui déclenche l'envoi du SMS) et le second (qui soumet le code).
-  // Il contient des données sensibles (cookies/wafToken) → dossier privé (0700) dans
-  // le home de l'utilisateur, jamais dans le /tmp partagé (évite symlink/disclosure).
+  // Session TR (cookies tr_session/tr_refresh) persistée par trapi : tant qu'elle
+  // se rafraîchit, les synchros suivantes ne redemandent pas de validation.
+  // Données sensibles → dossier privé (0700) dans le home, jamais dans le /tmp partagé.
   const stateDir = joinPath(homedir(), ".cache", "tr-bridge");
   try {
     mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   } catch { /* ignore */ }
-  const stateFile = joinPath(
+  const sessionFile = joinPath(
     stateDir,
-    `state_${Buffer.from(phoneNumber).toString("hex").slice(0, 20)}.json`,
+    `session_${Buffer.from(phoneNumber).toString("hex").slice(0, 20)}.json`,
   );
-  const STATE_TTL_MS = 10 * 60 * 1000; // 10 min = durée de validité du code TR
 
-  const api = new TradeRepublicApi(phoneNumber, pin);
+  // trapi lance Chromium sans borne mémoire : on ajoute les options qui tiennent dans
+  // le shm_size et la RAM du VPS (auparavant patchées à la main dans node_modules).
+  const launchChromium = puppeteer.launch.bind(puppeteer);
+  puppeteer.launch = (options: Parameters<typeof launchChromium>[0] = {}) =>
+    launchChromium({
+      ...options,
+      args: [
+        ...(options.args ?? []),
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--no-zygote",
+        "--disable-software-rasterizer",
+        "--js-flags=--max-old-space-size=192",
+      ],
+    });
+
+  // trapi.login() avale toute erreur (WAF, PIN refusé, 429, validation expirée…) et
+  // renvoie false : on capture son message pour l'exposer au backend.
+  let loginFailure: string | null = null;
+  const logger = {
+    debug: (...args: unknown[]) => log(...args),
+    info: (...args: unknown[]) => log(...args),
+    warn: (...args: unknown[]) => log(...args),
+    error: (...args: unknown[]) => {
+      const text = args.map((a) => (a instanceof Error ? a.message : String(a))).join(" ");
+      if (text.startsWith("Login failed:")) loginFailure = text.slice(0, 500);
+      console.error(...args);
+    },
+  };
+
+  const api = new TradeRepublicApi(phoneNumber, pin, sessionFile, logger);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const apiAny = api as any;
 
-  // Evite les boucles de reconnexion WebSocket (notamment sur code=3003).
-  // Quand la session WS se ferme, on laisse le flow "full login / device pin"
-  // gérer la demande de 2FA (un seul round), plutôt que de reconnecter X fois.
+  // trapi émet `error` (EventEmitter) quand le WebSocket est refusé, p. ex. 401 sur une
+  // session expirée : sans écouteur, Node lève l'erreur et tue le bridge avant que
+  // trapi ne tente le rafraîchissement de session puis la connexion complète.
+  api.on("error", (err: unknown) => {
+    log("[tr-bridge] erreur WebSocket trapi:", err instanceof Error ? err.message : err);
+  });
+
+  // Evite les boucles de reconnexion WebSocket (notamment sur code=3003) : le bridge
+  // est un script court, une session fermée se traite au prochain lancement.
   if (typeof apiAny._scheduleReconnect === "function") {
     apiAny._scheduleReconnect = () => {
       /* no-op: reconnexion desactivee */
@@ -579,103 +613,32 @@ async function main() {
     process.exit(code);
   };
 
-  let loggedIn = false;
-  let needsManualAuth = false;
-
-  // ── Appel 2 : code 2FA fourni — réutilise l'état sauvegardé sans Chromium ──
-  if (devicePin && existsSync(stateFile)) {
-    try {
-      const raw = readFileSync(stateFile, "utf-8");
-      const state: { processId?: string; rawCookies?: string; wafToken?: string; savedAt?: number } = JSON.parse(raw);
-      const age = Date.now() - (state.savedAt ?? 0);
-
-      if (state.processId && age < STATE_TTL_MS) {
-        log("Reprise de session avec code 2FA (processId sauvegardé, pas de Chromium).");
-        apiAny.processId = state.processId;
-        if (state.rawCookies) apiAny.rawCookies = state.rawCookies;
-        // Injecter le WAF token sauvegardé → _verifyDevicePin n'a pas besoin de spawner Chromium
-        if (state.wafToken) apiAny.currentWafToken = state.wafToken;
-
-        await apiAny._verifyDevicePin(devicePin);
-        await apiAny._setupWebSocket();
-        // Persister la session pour que les prochains appels sautent aussi le login complet
-        await apiAny._saveSessionToFile?.();
-        try { unlinkSync(stateFile); } catch { /* ignore */ }
-        loggedIn = true;
-      }
-    } catch (err) {
-      log("Reprise de session échouée, tentative de login complet :", err);
-      loggedIn = false;
-    }
-  }
-
-  // ── Appel 1 ou fallback : login complet ────────────────────────────────────
-  if (!loggedIn) {
-    try {
-      loggedIn = await api.login(async () => {
-        if (devicePin) return devicePin;
-
-        // Sauvegarder processId + cookies + wafToken pour l'appel 2 (évite de relancer Chromium)
-        const processId: string | undefined = apiAny.processId;
-        const rawCookies: string | undefined = apiAny.rawCookies;
-        const wafToken: string | undefined = apiAny.currentWafToken;
-        if (processId) {
-          try {
-            // Recréation propre en 0600 (unlink d'abord: writeFileSync ne rechmod pas
-            // un fichier existant, et ça évite de suivre un éventuel lien pré-planté).
-            try { unlinkSync(stateFile); } catch { /* ignore */ }
-            writeFileSync(
-              stateFile,
-              JSON.stringify({ processId, rawCookies, wafToken, savedAt: Date.now() }),
-              { mode: 0o600 },
-            );
-          } catch { /* ignore */ }
-        }
-
-        needsManualAuth = true;
-        // Sortie propre : on ferme Chromium avant d'exit pour libérer la RAM
-        await safeExit(2, jsonMode ? {
-          status: "needs_manual_auth",
-          reason: "device_pin_required",
-          timestamp: new Date().toISOString(),
-        } : undefined);
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error ?? "");
-      if (message.includes("DEVICE_PIN_REQUIRED") || needsManualAuth) {
-        await safeExit(2, jsonMode ? {
-          status: "needs_manual_auth",
-          reason: "device_pin_required",
-          timestamp: new Date().toISOString(),
-        } : undefined);
-      }
-      // 429 sur le login initial: on l'expose proprement
-      if (message.includes("429") || message.includes("TOO_MANY_REQUESTS")) {
-        const retryMatch = message.match(/"nextAttemptInSeconds"\s*:\s*(\d+)/);
-        const retryAfter = retryMatch ? parseInt(retryMatch[1], 10) : null;
-        await safeExit(3, jsonMode ? {
-          status: "rate_limited",
-          reason: "too_many_requests",
-          retry_after_seconds: retryAfter,
-          timestamp: new Date().toISOString(),
-        } : undefined);
-        if (!jsonMode) console.error(`Trop de tentatives. Réessaie dans ${retryAfter ?? "?"}s.`);
-      }
-      await closeBrowser();
-      throw error;
-    }
-  }
+  // Connexion v2 : sans session réutilisable, TR envoie une notification à valider
+  // dans l'appli mobile ; login() attend la confirmation jusqu'à 2 min.
+  log("Connexion à Trade Republic (valider la notification dans l'appli si demandé)...");
+  const loggedIn = await api.login();
 
   if (!loggedIn) {
-    await safeExit(2, jsonMode ? {
-      status: "needs_manual_auth",
-      reason: "device_pin_required",
+    const failure: string = loginFailure ?? "Login failed: raison inconnue";
+    if (failure.includes("429") || failure.includes("TOO_MANY_REQUESTS")) {
+      const retryMatch = failure.match(/"nextAttemptInSeconds"\s*:\s*(\d+)/);
+      await safeExit(3, jsonMode ? {
+        status: "rate_limited",
+        reason: "too_many_requests",
+        retry_after_seconds: retryMatch ? parseInt(retryMatch[1], 10) : null,
+        timestamp: new Date().toISOString(),
+      } : undefined);
+    }
+    const notConfirmed =
+      failure.includes("App confirmation timed out") || failure.includes("Device confirmation failed");
+    if (!jsonMode) console.error(failure);
+    await safeExit(4, jsonMode ? {
+      status: "login_failed",
+      reason: notConfirmed
+        ? "connexion non validée dans l'appli Trade Republic (2 min max)"
+        : failure,
       timestamp: new Date().toISOString(),
     } : undefined);
-    if (!jsonMode) {
-      console.error("Connexion echouee.");
-      await safeExit(1);
-    }
   }
 
   const accountPairsData = diagnosticsEnabled

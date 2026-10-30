@@ -189,7 +189,7 @@ def fetch_tr_valuation(
                 candidate = json.loads(raw_file)
                 if _is_bridge_payload(candidate) or (
                     isinstance(candidate, dict)
-                    and candidate.get("status") in {"needs_manual_auth", "rate_limited"}
+                    and candidate.get("status") in {"needs_manual_auth", "rate_limited", "login_failed"}
                 ):
                     payload = candidate
     finally:
@@ -208,6 +208,12 @@ def fetch_tr_valuation(
         raise TradeRepublicBridgeError(
             f"rate_limited: trop de tentatives, réessaie dans {retry}s" if retry else "rate_limited: trop de tentatives"
         )
+
+    if bridge_status == "login_failed" or (
+        isinstance(payload, dict) and payload.get("status") == "login_failed"
+    ):
+        reason = payload.get("reason") if isinstance(payload, dict) else None
+        raise TradeRepublicBridgeError(f"login_failed: {reason or stderr or 'connexion refusée'}")
 
     if proc.returncode != 0:
         if _is_manual_auth_hint(f"{stdout}\n{stderr}"):

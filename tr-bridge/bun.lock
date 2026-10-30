@@ -5,7 +5,8 @@
     "": {
       "name": "tr-bridge",
       "dependencies": {
-        "trapi": "NightOwl07/trade-republic-api",
+        "puppeteer": "24.42.0",
+        "trapi": "github:NightOwl07/trade-republic-api#5a33fed",
       },
     },
   },
@@ -192,13 +193,13 @@
 
     "text-decoder": ["text-decoder@1.2.7", "", { "dependencies": { "b4a": "^1.6.4" } }, "sha512-vlLytXkeP4xvEq2otHeJfSQIRyWxo/oZGEbXrtEEF9Hnmrdly59sUbzZ/QgyWuLYHctCHxFF4tRQZNQ9k60ExQ=="],
 
-    "trapi": ["trapi@github:NightOwl07/trade-republic-api#8154c4e", { "dependencies": { "bun-plugin-dts": "^0.2.3", "puppeteer": "^24.40.0", "ws": "^8.17.1" }, "peerDependencies": { "typescript": "^5.0.0" } }, "NightOwl07-trade-republic-api-8154c4e", "sha512-9jiqmOGP9krIfsm2upPjA0KUdC3x+n9V0NnYHvlkOM0ox+hhewuBDsVwRwEmFaRYpkGzdx5HcHbbY8URGzI3Ig=="],
+    "trapi": ["trapi@github:NightOwl07/trade-republic-api#5a33fed", { "dependencies": { "bun-plugin-dts": "^0.2.3", "puppeteer": "^24.40.0", "ws": "^8.17.1" }, "peerDependencies": { "typescript": "^5.0.0" } }, "NightOwl07-trade-republic-api-5a33fed", "sha512-qbysGpUqaD+li0gvys5+j6BGQWcT9v0TQNcUWlE/gevtLkJZnOWZUjph0eJqZir334Z6/uznSyX4zwM4p2gS4g=="],
 
     "tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
 
     "typed-query-selector": ["typed-query-selector@2.12.2", "", {}, "sha512-EOPFbyIub4ngnEdqi2yOcNeDLaX/0jcE1JoAXQDDMIthap7FoN795lc/SHfIq2d416VufXpM8z/lD+WRm2gfOQ=="],
 
-    "typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
+    "typescript": ["typescript@5.9.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw=="],
 
     "undici-types": ["undici-types@7.19.2", "", {}, "sha512-qYVnV5OEm2AW8cJMCpdV20CDyaN3g0AjDlOGf1OW4iaDEx8MwdtChUp4zu4H0VP3nDRF/8RKWH+IPp9uW0YGZg=="],
 
@@ -219,5 +220,7 @@
     "yauzl": ["yauzl@2.10.0", "", { "dependencies": { "buffer-crc32": "~0.2.3", "fd-slicer": "~1.1.0" } }, "sha512-p4a9I6X6nu6IhoGmBqAcbJy1mlC4j27vEPZX9F4L4/vZT3Lyq1VkFHw/V/PUcB9Buo+DG3iHkT0x3Qya58zc3g=="],
 
     "zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
+
+    "dts-bundle-generator/typescript": ["typescript@6.0.3", "", { "bin": { "tsc": "bin/tsc", "tsserver": "bin/tsserver" } }, "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw=="],
   }
 }
