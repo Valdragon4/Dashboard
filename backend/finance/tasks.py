@@ -74,6 +74,10 @@ def sync_all_bank_accounts() -> Dict:
 
             result = _sync_account(account, SyncLog.SyncType.AUTOMATIC)
 
+            if result.get("skipped"):
+                logger.info(f"Compte {account.id} sauté : {result.get('error')}")
+                continue
+
             if result["success"]:
                 results["success"] += 1
                 logger.info(

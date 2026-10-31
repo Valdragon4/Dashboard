@@ -451,12 +451,15 @@ def sync_tr_bridge_account_scheduled(account: Account, sync_type: str) -> dict:
 
     La connexion v2 exige de valider une notification dans l'appli : la nuit, personne
     ne le fera. On réutilise donc la session enregistrée par la dernière synchro
-    manuelle, sans jamais déclencher de notification. Renvoie un dict au format de
+    manuelle (24 h au plus après validation), sans jamais déclencher de notification.
+    Sans session valide, la synchro est simplement sautée : pas de SyncLog en erreur,
+    Trade Republic restant synchronisé à la main. Renvoie un dict au format de
     SyncService.sync_account.
     """
     from finance.models import SyncLog
 
     bank_connection = account.bank_connection
+    previous_status = bank_connection.sync_status
     sync_log = SyncLog.objects.create(
         bank_connection=bank_connection, sync_type=sync_type, status=SyncLog.Status.STARTED
     )
@@ -484,21 +487,25 @@ def sync_tr_bridge_account_scheduled(account: Account, sync_type: str) -> dict:
         }
 
     try:
-        snapshot = sync_bridge_snapshot_with_auth_handling(account=account, session_only=True)
+        snapshot = sync_bridge_snapshot_for_account(account=account, session_only=True)
+    except TradeRepublicBridgeAuthRequired:
+        logger.info("tr_bridge_scheduled_skipped account_id=%s reason=no_valid_session", account.id)
+        sync_log.delete()
+        bank_connection.sync_status = previous_status
+        bank_connection.save(update_fields=["sync_status", "updated_at"])
+        return {
+            "success": False,
+            "skipped": True,
+            "transactions_count": 0,
+            "error": "Session Trade Republic expirée : synchro manuelle requise",
+            "requires_2fa": True,
+        }
     except TradeRepublicBridgeError as exc:
         logger.warning("tr_bridge_scheduled_failed account_id=%s error=%s", account.id, exc)
         return _finish(
             SyncLog.Status.ERROR,
             BankConnection.SyncStatus.ERROR,
             error=f"Bridge Trade Republic indisponible: {exc}",
-        )
-
-    if snapshot.auth_status == TradeRepublicValuationSnapshot.AuthStatus.NEEDS_MANUAL_AUTH:
-        return _finish(
-            SyncLog.Status.ERROR,
-            BankConnection.SyncStatus.PENDING,
-            error="Session Trade Republic expirée : lancer une synchro manuelle et valider la notification",
-            requires_2fa=True,
         )
 
     count = 0
