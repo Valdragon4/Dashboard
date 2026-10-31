@@ -594,6 +594,36 @@ async function main() {
     };
   }
 
+  // trapi ne tente le rafraîchissement que si le WebSocket s'ouvre puis échoue à valider ;
+  // or un tr_session expiré (quelques minutes) fait refuser l'ouverture même (401), l'erreur
+  // part dans le catch et la session est jetée sans essayer tr_refresh. On réordonne.
+  if (typeof apiAny._loadValidateOrRefreshSavedSession === "function") {
+    apiAny._loadValidateOrRefreshSavedSession = async (): Promise<boolean> => {
+      const saved = await apiAny._loadSessionFromFile();
+      if (!saved?.trSessionToken) return false;
+      apiAny.trSessionToken = saved.trSessionToken;
+      apiAny.trRefreshToken = saved.trRefreshToken;
+      apiAny.rawCookies = saved.rawCookies;
+      try {
+        await apiAny._setupWebSocket();
+        if (apiAny.ws?.readyState === WebSocket.OPEN && (await apiAny._performSessionValidationSubscription())) {
+          return true;
+        }
+      } catch (err) {
+        logger.warn("Session enregistrée refusée:", err instanceof Error ? err.message : err);
+      }
+      try {
+        await apiAny._closeWebSocket();
+      } catch { /* ignore */ }
+      if (await apiAny._tryRefreshSession()) {
+        logger.warn("Session rafraîchie via tr_refresh.");
+        return true;
+      }
+      await apiAny._clearSessionAndConnection(true);
+      return false;
+    };
+  }
+
   if (sessionOnly && typeof apiAny._performInitialLoginStep === "function") {
     apiAny._performInitialLoginStep = async () => {
       throw new Error("SESSION_ONLY: aucune session réutilisable");
