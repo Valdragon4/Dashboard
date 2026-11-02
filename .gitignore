@@ -84,3 +84,7 @@ pdf/
 # Relevés bancaires / crypto importés (données personnelles)
 *.csv
 !backend/finance/tests/**/*.csv
+
+# Clés et sessions bancaires (Enable Banking…) — jamais dans git
+secrets/
+*.pem
