@@ -152,6 +152,7 @@ def normalize_transactions(raw_transactions: List[Dict], aspsp: str) -> List[Dic
                     "source": "enablebanking",
                     "aspsp": aspsp,
                     "transaction_id": transaction_id,
+                    "sync_fingerprint": transaction_id,
                     "bank_transaction_code": (tx.get("bank_transaction_code") or {}).get("description")
                     or (tx.get("bank_transaction_code") or {}).get("code"),
                     "counterparty": (counterparty or {}).get("name"),

@@ -35,6 +35,7 @@ services:
       - ./backend:/app
       - ./trade_republic_scraper:/app/trade_republic_scraper
       - ./tr-bridge:/app/tr-bridge
+      - ./secrets/enablebanking:/secrets/enablebanking:ro
       - tr_bridge_sessions:/root/.cache/tr-bridge
     ports:
       - "127.0.0.1:8000:8000"
@@ -69,6 +70,7 @@ services:
     volumes:
       - ./backend:/app
       - ./tr-bridge:/app/tr-bridge
+      - ./secrets/enablebanking:/secrets/enablebanking:ro
       # Sessions Trade Republic partagées avec web : la nuit, on réutilise celle de la dernière synchro manuelle
       - tr_bridge_sessions:/root/.cache/tr-bridge
     depends_on:
@@ -92,6 +94,7 @@ services:
     volumes:
       - ./backend:/app
       - ./tr-bridge:/app/tr-bridge
+      - ./secrets/enablebanking:/secrets/enablebanking:ro
     depends_on:
       db:
         condition: service_healthy

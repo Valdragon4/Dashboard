@@ -224,7 +224,9 @@ class SyncService:
             description=description,
             source=source,
         )
-        raw.setdefault("sync_fingerprint", sync_fingerprint)
+        # Un connecteur peut fournir sa propre empreinte (ex. Enable Banking, qui
+        # distingue deux operations identiques du meme jour par leur rang).
+        sync_fingerprint = raw.setdefault("sync_fingerprint", sync_fingerprint)
 
         category = SyncService._resolve_category(raw)
         defaults = {"currency": account.currency or "EUR", "raw": raw}
