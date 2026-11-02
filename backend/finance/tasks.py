@@ -371,3 +371,26 @@ def sync_bitstack_valuations() -> Dict:
         else:
             valued += 1
     return {"valued": valued, "skipped": skipped}
+
+
+@shared_task
+def fetch_regulated_savings_rates() -> Dict:
+    """Relève les taux officiels du Livret A et du LEP (service-public.gouv.fr)."""
+    from finance.services.regulated_savings import fetch_official_rates
+
+    report = fetch_official_rates()
+    logger.info("taux livrets : %s", report)
+    return report
+
+
+@shared_task
+def credit_regulated_savings_interest(year: int | None = None) -> list:
+    """Crédite au 31/12 les intérêts calculés de l'année écoulée sur chaque livret."""
+    from django.utils import timezone as _tz
+
+    from finance.services.regulated_savings import credit_yearly_interest
+
+    year = year or (_tz.localdate().year - 1)
+    out = credit_yearly_interest(year)
+    logger.info("intérêts livrets %s : %s", year, out)
+    return out

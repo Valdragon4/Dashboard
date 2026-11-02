@@ -1049,6 +1049,39 @@ def settings_view(request: HttpRequest) -> HttpResponse:
         owner=request.user, type=Account.AccountType.CHECKING
     ).order_by("name")
 
+    from .services import regulated_savings as rs
+
+    savings_accounts = Account.objects.filter(owner=request.user, type=Account.AccountType.SAVINGS).order_by("name")
+
+    if request.method == "POST" and request.POST.get("form") == "savings":
+        valid = {v for v, _ in Account.SavingsProduct.choices}
+        for account in savings_accounts:
+            product = request.POST.get(f"product_{account.id}", "")
+            if product in valid or product == "":
+                if product != account.savings_product:
+                    account.savings_product = product
+                    account.save(update_fields=["savings_product"])
+            raw_balance = (request.POST.get(f"balance_{account.id}") or "").replace(" ", "").replace(",", ".")
+            if raw_balance:
+                try:
+                    rs.set_balance(account, Decimal(raw_balance))
+                except Exception:
+                    messages.error(request, f"Solde illisible pour « {account.name} » : {raw_balance}")
+        messages.success(request, "Livrets mis à jour.")
+        return redirect("settings")
+
+    if request.method == "POST" and request.POST.get("form") == "savings_assign":
+        tx = get_object_or_404(Transaction, id=request.POST.get("tx_id"), account__owner=request.user)
+        target_id = request.POST.get("target", "")
+        if target_id == "none":
+            rs.dismiss_withdrawal(tx)
+            messages.success(request, "Opération rendue au compte courant.")
+        else:
+            target = get_object_or_404(Account, id=target_id, owner=request.user)
+            rs.assign_withdrawal(tx, target)
+            messages.success(request, f"Retrait affecté à « {target.name} ».")
+        return redirect("settings")
+
     if request.method == "POST" and request.POST.get("form") == "current_balance":
         selected = {int(x) for x in request.POST.getlist("current_balance_accounts") if x.isdigit()}
         for account in checking_accounts:
@@ -1078,6 +1111,20 @@ def settings_view(request: HttpRequest) -> HttpResponse:
             "tr_subaccounts": tr_subaccounts,
             "tr_portfolio_types": TradeRepublicPortfolioSnapshot.PortfolioType.choices,
             "checking_accounts": checking_accounts,
+            "savings_rows": [
+                {
+                    "account": a,
+                    "balance": rs.balance_on(a, timezone.localdate()),
+                    "rate": rs.rate_on(a.savings_product, timezone.localdate()) if a.savings_product else None,
+                    "interest": rs.compute_interest(a, timezone.localdate().year, until=timezone.localdate())
+                    if a.savings_product
+                    else None,
+                }
+                for a in savings_accounts
+            ],
+            "savings_products": Account.SavingsProduct.choices,
+            "pending_withdrawals": rs.pending_withdrawals(request.user),
+            "livret_accounts": [a for a in savings_accounts if a.savings_product],
         },
     )
 

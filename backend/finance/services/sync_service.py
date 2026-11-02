@@ -516,6 +516,19 @@ class SyncService:
                         provider,
                     )
 
+            # Livrets non exposés en DSP2 : recopie des virements du compte courant.
+            if (
+                provider == BankConnection.Provider.ENABLEBANKING
+                and account.type == Account.AccountType.CHECKING
+            ):
+                try:
+                    from finance.services.regulated_savings import mirror_transfers
+
+                    mirror_stats = mirror_transfers(account)
+                    logger.info("savings_mirror account=%s %s", account.id, mirror_stats)
+                except Exception:
+                    logger.exception("savings_mirror account=%s : échec (sync non bloquée)", account.id)
+
             # Valorisations portefeuille (optionnel, ne bloque pas la sync)
             portfolio_valuations = {}
             try:

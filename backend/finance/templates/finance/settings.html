@@ -55,6 +55,75 @@
   </div>
   {% endif %}
 
+  {% if savings_rows %}
+  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-8">
+    <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-2">Livrets réglementés</h2>
+    <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+      La banque n'expose pas les livrets : leur solde suit les virements du compte courant synchronisé
+      (« VIREMENT VERS LEP / LIVRET A »), et les intérêts sont calculés par quinzaines au taux officiel,
+      relevé chaque semaine sur service-public.gouv.fr, puis crédités au 31 décembre.
+      Saisissez le solde réel de temps en temps pour recaler.
+    </p>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="form" value="savings">
+      <div class="space-y-3">
+        {% for row in savings_rows %}
+        <div class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600">
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <span class="text-sm font-medium text-gray-900 dark:text-white">{{ row.account.name }}</span>
+            <span class="text-sm text-gray-700 dark:text-gray-300">{{ row.balance|floatformat:2 }} €
+              {% if row.account.balance_snapshot_date %}<span class="text-xs text-gray-500 dark:text-gray-400">· recalé le {{ row.account.balance_snapshot_date|date:"d/m/Y" }}</span>{% endif %}
+            </span>
+          </div>
+          {% if row.account.savings_product %}
+          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+            Taux actuel : {% if row.rate is not None %}{{ row.rate|floatformat:2 }} %{% else %}inconnu{% endif %}
+            · intérêts {% now "Y" %} courus (estimation) : {{ row.interest.amount|floatformat:2 }} €
+            {% if row.interest.missing_rates %}<span class="text-amber-700 dark:text-amber-400">— taux manquants</span>{% endif %}
+          </p>
+          {% endif %}
+          <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <label class="text-xs text-gray-600 dark:text-gray-400">Type de livret
+              <select name="product_{{ row.account.id }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm">
+                <option value="">— Aucun (compte manuel) —</option>
+                {% for value, label in savings_products %}<option value="{{ value }}" {% if row.account.savings_product == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select>
+            </label>
+            <label class="text-xs text-gray-600 dark:text-gray-400">Solde réel aujourd'hui (optionnel)
+              <input type="text" inputmode="decimal" name="balance_{{ row.account.id }}" placeholder="ex. 1037,02"
+                     class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm">
+            </label>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      <button type="submit" class="mt-4 px-6 py-2 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark transition-colors shadow-sm">Enregistrer</button>
+    </form>
+
+    {% if pending_withdrawals %}
+    <h3 class="mt-6 mb-2 text-base font-semibold text-gray-900 dark:text-white">Retraits à affecter</h3>
+    <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">
+      La banque ne dit pas de quel livret vient un retrait. Astuce : écrivez « LEP » ou « LIVRET A » dans le motif du virement, il sera affecté tout seul.
+    </p>
+    <div class="space-y-2">
+      {% for tx in pending_withdrawals %}
+      <form method="post" class="flex flex-wrap items-center gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+        {% csrf_token %}
+        <input type="hidden" name="form" value="savings_assign">
+        <input type="hidden" name="tx_id" value="{{ tx.id }}">
+        <span class="text-sm text-gray-900 dark:text-white flex-1 min-w-[10rem]">{{ tx.posted_at|date:"d/m/Y" }} · +{{ tx.amount|floatformat:2 }} € <span class="text-xs text-gray-500">({{ tx.account.name }})</span></span>
+        {% for a in livret_accounts %}
+        <button name="target" value="{{ a.id }}" class="px-3 py-1 text-xs font-medium text-primary border border-primary/40 rounded-lg hover:bg-primary hover:text-white">Depuis {{ a.get_savings_product_display }}</button>
+        {% endfor %}
+        <button name="target" value="none" class="px-3 py-1 text-xs text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700">Pas un livret</button>
+      </form>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {% if tr_subaccounts %}
   <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 mb-8">
     <h2 class="text-xl font-bold text-gray-900 mb-2">Sous-comptes Trade Republic</h2>

@@ -116,6 +116,16 @@ CELERY_BEAT_SCHEDULE = {
         "task": "finance.tasks.sync_bitstack_valuations",
         "schedule": crontab(hour=0, minute=15),
     },
+    # Taux officiels Livret A / LEP : chaque lundi (ils changent les 1er février et 1er août)
+    "fetch-regulated-savings-rates-weekly": {
+        "task": "finance.tasks.fetch_regulated_savings_rates",
+        "schedule": crontab(hour=7, minute=0, day_of_week=1),
+    },
+    # Intérêts des livrets de l'année écoulée, crédités au 31/12 : le 2 janvier
+    "credit-regulated-savings-interest-yearly": {
+        "task": "finance.tasks.credit_regulated_savings_interest",
+        "schedule": crontab(hour=6, minute=0, day_of_month=2, month_of_year=1),
+    },
     # Réconcilie les runs orphelins (STARTED figé après SIGKILL) toutes les 15 min
     "reconcile-stale-sync-logs": {
         "task": "finance.tasks.reconcile_stale_sync_logs",

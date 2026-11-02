@@ -38,6 +38,16 @@ class Account(models.Model):
     initial_balance = models.DecimalField(max_digits=16, decimal_places=2, default=0, help_text="Solde initial avant toutes les transactions importées")
     balance_snapshot_date = models.DateField(null=True, blank=True, help_text="Date du snapshot du solde initial")
     include_in_dashboard = models.BooleanField(default=True, help_text="Inclure ce compte dans les statistiques du dashboard")
+    class SavingsProduct(models.TextChoices):
+        LIVRET_A = "livret_a", "Livret A"
+        LEP = "lep", "LEP"
+
+    savings_product = models.CharField(
+        max_length=16,
+        blank=True,
+        choices=SavingsProduct.choices,
+        help_text="Livret réglementé : virements recopiés depuis le compte courant, intérêts calculés.",
+    )
     include_in_current_balance = models.BooleanField(
         default=True,
         help_text="Compter ce compte courant dans la carte « Solde courant » (Paramètres). "
@@ -87,6 +97,23 @@ class Transaction(models.Model):
             models.Index(fields=["posted_at"]),
             models.Index(fields=["account", "posted_at"]),
         ]
+
+
+class RegulatedSavingsRate(models.Model):
+    """Taux d'un livret réglementé à partir d'une date (relevé sur service-public.gouv.fr)."""
+
+    product = models.CharField(max_length=16, choices=Account.SavingsProduct.choices)
+    rate = models.DecimalField(max_digits=5, decimal_places=3, help_text="Taux annuel en %, ex. 1.700")
+    valid_from = models.DateField()
+    source = models.CharField(max_length=255, blank=True)
+    fetched_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["product", "valid_from"], name="uniq_rate_product_from")]
+        ordering = ["product", "-valid_from"]
+
+    def __str__(self) -> str:  # pragma: no cover
+        return f"{self.product} {self.rate} % depuis {self.valid_from}"
 
 
 class CashflowRule(models.Model):
