@@ -16,8 +16,9 @@ Choix de données :
   - seules les opérations comptabilisées (BOOK) sont importées ; les opérations
     en attente changent souvent de libellé ou de montant en passant ;
   - le solde est le solde comptable, cohérent avec ces seules opérations ;
-  - certaines banques (Hello Bank) ne donnent aucun identifiant d'opération :
-    on en fabrique un à partir de (date, montant, libellé, rang du doublon).
+  - identifiant d'opération tiré du contenu (date, montant, libellé, rang) :
+    Hello Bank ne donne son numéro d'opération qu'à partir du lendemain ; ce
+    numéro sert de clé secondaire (operation_id).
 """
 
 from __future__ import annotations
@@ -109,14 +110,33 @@ def _booking_day(tx: Dict) -> Optional[date]:
     return _parse_date(tx.get("booking_date") or tx.get("value_date") or tx.get("transaction_date"))
 
 
+def content_transaction_id(aspsp: str, day: date, amount: Decimal, description: str, rank: int) -> str:
+    """
+    Identifiant d'opération tiré de son contenu (date, montant, libellé) et de
+    son rang parmi les opérations identiques du même jour.
+
+    On ne s'appuie PAS sur l'identifiant de la banque pour la clé principale :
+    Hello Bank renvoie une opération du jour sans `entry_reference`, puis avec
+    le lendemain — une clé fondée dessus créerait un doublon. Il sert de clé
+    secondaire (`operation_id`).
+    """
+    key = f"{day.isoformat()}|{Decimal(amount).quantize(Decimal('0.01'))}|{_normalize_label(description)}"
+    digest = hashlib.sha256(f"{aspsp}|{key}".encode()).hexdigest()[:24]
+    return f"eb:{digest}#{rank}"
+
+
+def _content_key(day: date, amount: Decimal, description: str) -> str:
+    return f"{day.isoformat()}|{Decimal(amount).quantize(Decimal('0.01'))}|{_normalize_label(description)}"
+
+
 def normalize_transactions(raw_transactions: List[Dict], aspsp: str) -> List[Dict]:
     """
     Convertit les opérations Enable Banking au format attendu par SyncService.
 
-    Ignore les opérations non comptabilisées. Fabrique un identifiant stable
-    quand la banque n'en fournit pas : deux opérations identiques le même jour
-    sont distinguées par leur rang (#1, #2…), ce qui reste stable d'une synchro
-    à l'autre puisque la fenêtre couvre toujours des journées entières.
+    Ignore les opérations non comptabilisées. Identifiant = contenu + rang (voir
+    content_transaction_id) ; deux opérations identiques le même jour sont
+    distinguées par leur rang (#1, #2…), stable d'une synchro à l'autre puisque
+    la fenêtre couvre toujours des journées entières.
     """
     out: List[Dict] = []
     seen: Dict[str, int] = {}
@@ -132,14 +152,10 @@ def normalize_transactions(raw_transactions: List[Dict], aspsp: str) -> List[Dic
             continue
         description = _description(tx)
 
+        key = _content_key(day, amount, description)
+        seen[key] = seen.get(key, 0) + 1
+        transaction_id = content_transaction_id(aspsp, day, amount, description, seen[key])
         upstream_id = tx.get("entry_reference") or tx.get("transaction_id")
-        if upstream_id:
-            transaction_id = f"eb:{aspsp}:{upstream_id}"
-        else:
-            key = f"{day.isoformat()}|{amount}|{_normalize_label(description)}"
-            seen[key] = seen.get(key, 0) + 1
-            digest = hashlib.sha256(f"{aspsp}|{key}".encode()).hexdigest()[:24]
-            transaction_id = f"eb:{digest}#{seen[key]}"
 
         counterparty = tx.get("creditor") if amount < 0 else tx.get("debtor")
         out.append(
@@ -153,6 +169,7 @@ def normalize_transactions(raw_transactions: List[Dict], aspsp: str) -> List[Dic
                     "aspsp": aspsp,
                     "transaction_id": transaction_id,
                     "sync_fingerprint": transaction_id,
+                    **({"operation_id": f"eb:{aspsp}:{upstream_id}"} if upstream_id else {}),
                     "bank_transaction_code": (tx.get("bank_transaction_code") or {}).get("description")
                     or (tx.get("bank_transaction_code") or {}).get("code"),
                     "counterparty": (counterparty or {}).get("name"),

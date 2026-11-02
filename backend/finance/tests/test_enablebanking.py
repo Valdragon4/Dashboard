@@ -7,7 +7,7 @@ Les réponses d'API reprennent la forme réelle observée chez Hello Bank le
 
 import base64
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, time as dtime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -70,9 +70,12 @@ class NormalizeTransactionsTests(TestCase):
         second = [t["raw"]["transaction_id"] for t in normalize_transactions(list(reversed(raw)), "Hello Bank")]
         self.assertEqual(sorted(first), sorted(second))
 
-    def test_identifiant_amont_prioritaire(self):
-        out = normalize_transactions([_tx("2026-10-30", "1", "DBIT", "A", entry_reference="R1")], "Revolut")
-        self.assertEqual(out[0]["raw"]["transaction_id"], "eb:Revolut:R1")
+    def test_identifiant_banque_en_cle_secondaire(self):
+        sans = normalize_transactions([_tx("2026-10-30", "1", "DBIT", "A")], "Hello Bank")[0]["raw"]
+        avec = normalize_transactions([_tx("2026-10-30", "1.00", "DBIT", "A", entry_reference="R1")], "Hello Bank")[0]["raw"]
+        self.assertEqual(sans["transaction_id"], avec["transaction_id"], "même opération, numéro apparu après coup")
+        self.assertEqual(avec["operation_id"], "eb:Hello Bank:R1")
+        self.assertNotIn("operation_id", sans)
 
 
 class PickBalanceTests(TestCase):
@@ -309,3 +312,47 @@ class ConnectListTests(TestCase):
         resp = self.client.get(reverse("enablebanking_connect"))
         self.assertContains(resp, "Trade Republic (bêta)")
         self.assertContains(resp, "Hello Bank")
+
+
+class ReferenceTardiveTests(TestCase):
+    """Hello Bank : opération du jour sans numéro, puis avec le lendemain."""
+
+    def setUp(self):
+        _with_encryption_key(self)
+        self.user = User.objects.create_user(username="u", password="p")
+        self.account = Account.objects.create(owner=self.user, name="HB", type=Account.AccountType.CHECKING)
+        connection = store_session(self.user, CTX, SESSION)
+        link = BankAccountLink.objects.get(connection=connection)
+        link.account = self.account
+        link.save()
+        self.account.bank_connection = connection
+        self.account.auto_sync_enabled = True
+        self.account.save()
+
+    def _sync(self, txs):
+        client = MagicMock()
+        client.get_session.return_value = {"status": "AUTHORIZED"}
+        client.get_transactions.return_value = txs
+        client.get_balances.return_value = [{"balance_type": "XPCD", "balance_amount": {"amount": "0"}}]
+        with patch.object(SyncService, "_get_connector_for_provider", return_value=EnableBankingConnector(client)):
+            return SyncService.sync_account(self.account, sync_type=SyncLog.SyncType.MANUAL)
+
+    def test_pas_de_doublon_quand_le_numero_apparait(self):
+        day = (timezone.localdate() - timedelta(days=1)).isoformat()
+        self._sync([_tx(day, "850.00", "DBIT", "VERS LIVRET A")])
+        self._sync([_tx(day, "850.00", "DBIT", "VERS LIVRET A", entry_reference="000025")])
+        self.assertEqual(Transaction.objects.filter(account=self.account).count(), 1)
+        self.assertEqual(Transaction.objects.get(account=self.account).raw["operation_id"], "eb:Hello Bank:000025")
+
+    def test_reindexation_des_anciens_identifiants(self):
+        from django.core.management import call_command
+
+        day = timezone.localdate() - timedelta(days=1)
+        posted = timezone.make_aware(datetime.combine(day, dtime(12, 0)))
+        Transaction.objects.create(account=self.account, posted_at=posted, amount=Decimal("-120.00"),
+                                   description="VERS LIVRET A",
+                                   raw={"source": "enablebanking", "aspsp": "Hello Bank",
+                                        "transaction_id": "eb:Hello Bank:R9", "sync_fingerprint": "eb:Hello Bank:R9"})
+        call_command("enablebanking_reindex")
+        self._sync([_tx(day.isoformat(), "120", "DBIT", "VERS LIVRET A", entry_reference="R9")])
+        self.assertEqual(Transaction.objects.filter(account=self.account).count(), 1)
