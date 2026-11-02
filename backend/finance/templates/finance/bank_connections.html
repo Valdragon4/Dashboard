@@ -13,6 +13,9 @@
         </svg>
         Nouvelle connexion
       </a>
+      <a href="{% url 'enablebanking_connect' %}" class="px-4 py-2 bg-white dark:bg-gray-800 text-primary border border-primary/40 rounded-lg text-sm font-medium hover:bg-primary hover:text-white transition-colors shadow-sm flex items-center gap-2 self-start">
+        Connecter une banque (DSP2)
+      </a>
     </div>
   </div>
 
@@ -36,13 +39,15 @@
           <div class="flex items-center gap-3">
             <!-- Provider icon -->
             <div class="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0
-              {% if connection.provider == 'trade_republic' %}bg-purple-100{% elif connection.provider == 'boursorama' %}bg-blue-100{% elif connection.provider == 'hellobank' %}bg-green-100{% else %}bg-gray-100{% endif %}">
+              {% if connection.provider == 'trade_republic' %}bg-purple-100{% elif connection.provider == 'boursorama' %}bg-blue-100{% elif connection.provider == 'hellobank' %}bg-green-100{% elif connection.provider == 'enablebanking' %}bg-indigo-100{% else %}bg-gray-100{% endif %}">
               {% if connection.provider == 'trade_republic' %}
                 <span class="font-bold text-purple-700 text-sm">TR</span>
               {% elif connection.provider == 'boursorama' %}
                 <span class="font-bold text-blue-700 text-sm">BB</span>
               {% elif connection.provider == 'hellobank' %}
                 <span class="font-bold text-green-700 text-sm">HB</span>
+              {% elif connection.provider == 'enablebanking' %}
+                <span class="font-bold text-indigo-700 text-sm">{{ connection.account_name|slice:":2"|upper }}</span>
               {% else %}
                 <span class="font-bold text-gray-700 text-sm">??</span>
               {% endif %}
@@ -50,9 +55,18 @@
             <div>
               <h2 class="font-semibold text-gray-900 dark:text-white text-base">{{ connection.account_name }}</h2>
               <span class="px-2 py-0.5 text-xs font-medium rounded-full
-                {% if connection.provider == 'trade_republic' %}bg-purple-100 text-purple-800{% elif connection.provider == 'boursorama' %}bg-blue-100 text-blue-800{% elif connection.provider == 'hellobank' %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-800{% endif %}">
+                {% if connection.provider == 'trade_republic' %}bg-purple-100 text-purple-800{% elif connection.provider == 'boursorama' %}bg-blue-100 text-blue-800{% elif connection.provider == 'hellobank' %}bg-green-100 text-green-800{% elif connection.provider == 'enablebanking' %}bg-indigo-100 text-indigo-800{% else %}bg-gray-100 text-gray-800{% endif %}">
                 {{ connection.get_provider_display }}
               </span>
+              {% if connection.consent %}
+                {% if connection.consent.expired %}
+                  <span class="ml-1 px-2 py-0.5 text-xs font-medium rounded-full bg-red-100 text-red-800">Accès expiré</span>
+                {% elif connection.consent.valid_until %}
+                  <span class="ml-1 text-xs {% if connection.consent.expiring %}font-semibold text-amber-700 dark:text-amber-400{% else %}text-gray-500 dark:text-gray-400{% endif %}">
+                    Accès valable jusqu'au {{ connection.consent.valid_until|date:"d/m/Y" }}{% if connection.consent.expiring %} ({{ connection.consent.days_left }} j){% endif %}
+                  </span>
+                {% endif %}
+              {% endif %}
             </div>
           </div>
 
@@ -76,9 +90,21 @@
             <a href="{% url 'sync_logs_list' %}?connection_id={{ connection.id }}" class="text-xs text-primary hover:underline">
               Logs ({{ connection.transactions_count }})
             </a>
+{% if connection.provider == 'enablebanking' %}
+            <a href="{% url 'enablebanking_accounts' connection.id %}" class="px-2.5 py-1 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+              ✎ Comptes
+            </a>
+            <form method="post" action="{% url 'enablebanking_renew' connection.id %}" class="inline">
+              {% csrf_token %}
+              <button type="submit" class="px-2.5 py-1 text-xs font-medium rounded-lg transition-colors {% if connection.consent.expiring or connection.consent.expired or connection.sync_status == 'error' %}bg-primary text-white hover:bg-primary-dark{% else %}text-primary hover:bg-primary/10{% endif %}">
+                ↻ Renouveler l'accès
+              </button>
+            </form>
+            {% else %}
             <a href="{% url 'bank_connection_update' connection.id %}" class="px-2.5 py-1 text-xs text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
               ✎ Modifier
             </a>
+            {% endif %}
             <form method="post" action="{% url 'bank_connection_delete' connection.id %}" onsubmit="return confirm('Supprimer cette connexion ?');" class="inline">
               {% csrf_token %}
               <button type="submit" class="px-2.5 py-1 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors">
@@ -147,7 +173,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
               </svg>
               Aucun compte lié.
-              <a href="{% url 'bank_connection_update' connection.id %}" class="text-primary hover:underline">Associer des comptes →</a>
+              <a href="{% if connection.provider == 'enablebanking' %}{% url 'enablebanking_accounts' connection.id %}{% else %}{% url 'bank_connection_update' connection.id %}{% endif %}" class="text-primary hover:underline">Associer des comptes →</a>
             </div>
           {% endif %}
         </div>

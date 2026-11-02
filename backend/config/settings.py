@@ -234,6 +234,20 @@ BOURSOBANK_MAX_PREVIOUS_CLICKS = int(os.getenv("BOURSOBANK_MAX_PREVIOUS_CLICKS",
 # opérations postées en retard. Une sync quotidienne ne remonte donc que ~3 jours.
 BOURSOBANK_SINCE_MARGIN_DAYS = int(os.getenv("BOURSOBANK_SINCE_MARGIN_DAYS", "3"))
 
+# Enable Banking (agrégateur DSP2, lecture seule) — Hello Bank, Revolut…
+# Clé privée RS256 de l'application montée en lecture seule depuis ./secrets
+# (jamais dans git). Identifiant d'application visible dans le panneau Enable Banking.
+ENABLEBANKING_APP_ID = os.getenv("ENABLEBANKING_APP_ID", "")
+ENABLEBANKING_KEY_PATH = os.getenv("ENABLEBANKING_KEY_PATH", "/secrets/enablebanking/private.pem")
+ENABLEBANKING_REDIRECT_URL = os.getenv(
+    "ENABLEBANKING_REDIRECT_URL", "https://finance.valentin-marot.fr/finance/enablebanking/callback/"
+)
+# Les banques refusent en général l'historique au-delà de 90 jours sans nouvelle SCA.
+ENABLEBANKING_MAX_HISTORY_DAYS = int(os.getenv("ENABLEBANKING_MAX_HISTORY_DAYS", "89"))
+ENABLEBANKING_SINCE_MARGIN_DAYS = int(os.getenv("ENABLEBANKING_SINCE_MARGIN_DAYS", "5"))
+# Avertir quand le consentement expire dans moins de N jours.
+ENABLEBANKING_EXPIRY_WARNING_DAYS = int(os.getenv("ENABLEBANKING_EXPIRY_WARNING_DAYS", "14"))
+
 # Trade Republic Bridge (Bun/TS)
 TR_BRIDGE_ENABLED = os.getenv("TR_BRIDGE_ENABLED", "0") == "1"
 TR_BRIDGE_SHADOW_MODE = os.getenv("TR_BRIDGE_SHADOW_MODE", "0") == "1"

@@ -35,6 +35,8 @@ try:
 except ImportError:
     BoursoBankConnector = None
 
+from finance.connectors.enablebanking import EnableBankingConnector
+
 try:
     from finance.connectors.hellobank import HelloBankConnector
     PLAYWRIGHT_AVAILABLE = True
@@ -54,6 +56,7 @@ _ERROR_CODES = {
     "invalid_credentials": "Identifiants invalides",
     "network_timeout": "Timeout connexion bancaire",
     "partial_sync": "Transactions indisponibles (auth OK)",
+    "rate_limited": "Quota d'accès de la banque atteint",
 }
 
 
@@ -65,6 +68,8 @@ def _classify_error(exc: Exception) -> str:
         return "network_timeout"
     if isinstance(exc, AuthenticationError):
         return "invalid_credentials"
+    if isinstance(exc, RateLimitError):
+        return "rate_limited"
     return "network_timeout"
 
 
@@ -101,6 +106,8 @@ class SyncService:
             if not PLAYWRIGHT_AVAILABLE or HelloBankConnector is None:
                 raise ImportError("Playwright non disponible pour HelloBank.")
             return HelloBankConnector()
+        elif provider == BankConnection.Provider.ENABLEBANKING:
+            return EnableBankingConnector()
         else:
             raise ValueError(f"Provider inconnu: {provider}")
 
@@ -485,6 +492,11 @@ class SyncService:
                         provider,
                     )
                     should_rebase_initial = False
+                elif provider == BankConnection.Provider.ENABLEBANKING:
+                    # DSP2 : solde comptable exact a chaque synchro, mais historique
+                    # limite (~90 j). On recale donc toujours le point de depart pour
+                    # que solde initial + operations importees = solde reel.
+                    should_rebase_initial = True
                 else:
                     has_absolute_tx_balance = Transaction.objects.filter(
                         account=account,

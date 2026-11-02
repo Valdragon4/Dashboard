@@ -1530,6 +1530,10 @@ def bank_connections_list(request: HttpRequest) -> HttpResponse:
 
         # Trouver TOUS les comptes liés à cette connexion
         connection.linked_accounts = list(Account.objects.filter(bank_connection=connection).order_by("name"))
+        if connection.provider == BankConnection.Provider.ENABLEBANKING:
+            from .views_enablebanking import consent_status
+
+            connection.consent = consent_status(connection)
 
     return render(request, "finance/bank_connections.html", {"connections": connections})
 
@@ -1614,6 +1618,17 @@ def bank_connection_sync(request: HttpRequest, connection_id: int) -> HttpRespon
         if request.headers.get("X-Requested-With") == "XMLHttpRequest":
             return JsonResponse({"success": False, "error": "Connexion bancaire introuvable."}, status=404)
         messages.error(request, "Connexion bancaire introuvable.")
+        return redirect("bank_connections_list")
+
+    if connection.provider == BankConnection.Provider.ENABLEBANKING:
+        from finance.tasks import sync_bank_account
+
+        account_ids = list(Account.objects.filter(bank_connection=connection).values_list("id", flat=True))
+        for account_id in account_ids:
+            sync_bank_account.delay(account_id, sync_type=SyncLog.SyncType.MANUAL)
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return JsonResponse({"success": bool(account_ids), "message": f"{len(account_ids)} synchronisation(s) démarrée(s)."})
+        messages.success(request, f"{len(account_ids)} synchronisation(s) démarrée(s).")
         return redirect("bank_connections_list")
 
     # Trouver le compte associé

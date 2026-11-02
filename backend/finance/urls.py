@@ -1,5 +1,6 @@
 from django.urls import path
 from . import views
+from . import views_enablebanking
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
@@ -26,6 +27,10 @@ urlpatterns = [
     path("bank-connections/<int:connection_id>/delete/", views.bank_connection_delete, name="bank_connection_delete"),
     path("bank-connections/<int:connection_id>/sync/", views.bank_connection_sync, name="bank_connection_sync"),
     path("bank-connections/<int:connection_id>/2fa/", views.bank_connection_2fa, name="bank_connection_2fa"),
+    path("bank-connections/enablebanking/new/", views_enablebanking.enablebanking_connect, name="enablebanking_connect"),
+    path("bank-connections/<int:connection_id>/enablebanking/renew/", views_enablebanking.enablebanking_renew, name="enablebanking_renew"),
+    path("bank-connections/<int:connection_id>/enablebanking/accounts/", views_enablebanking.enablebanking_accounts, name="enablebanking_accounts"),
+    path("finance/enablebanking/callback/", views_enablebanking.enablebanking_callback, name="enablebanking_callback"),
     # Logs de synchronisation (Story 1.10)
     path("bank-connections/logs/", views.sync_logs_list, name="sync_logs_list"),
     path("bank-connections/logs/<int:log_id>/", views.sync_log_detail, name="sync_log_detail"),

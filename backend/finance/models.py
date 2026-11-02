@@ -138,7 +138,8 @@ class BankConnection(models.Model):
     class Provider(models.TextChoices):
         TRADE_REPUBLIC = "trade_republic", "Trade Republic"
         BOURSORAMA = "boursorama", "BoursoBank"
-        HELLOBANK = "hellobank", "Hello Bank"
+        HELLOBANK = "hellobank", "Hello Bank (ancien scraper)"
+        ENABLEBANKING = "enablebanking", "Banque DSP2 (Enable Banking)"
 
     class SyncStatus(models.TextChoices):
         PENDING = "pending", "En attente"
