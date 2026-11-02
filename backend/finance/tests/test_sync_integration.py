@@ -214,68 +214,6 @@ class TestSyncIntegrationBoursoBank(TestCase):
         self.assertEqual(sync_log.status, SyncLog.Status.SUCCESS)
 
 
-class TestSyncIntegrationHelloBank(TestCase):
-    """Tests d'intégration pour le flux complet Hello Bank."""
-
-    def setUp(self):
-        """Configure l'environnement de test."""
-        test_key = EncryptionService.generate_key()
-        os.environ["ENCRYPTION_KEY"] = test_key
-
-        self.user = User.objects.create_user(username="testuser", password="testpass")
-        self.account = Account.objects.create(
-            owner=self.user,
-            name="Test Account Hello Bank",
-            type=Account.AccountType.CHECKING,
-            auto_sync_enabled=True,
-        )
-
-        credentials = {"username": "test_user", "password": "test_pass"}
-        encrypted_credentials = EncryptionService.encrypt_credentials(credentials)
-
-        self.bank_connection = BankConnection.objects.create(
-            owner=self.user,
-            provider=BankConnection.Provider.HELLOBANK,
-            account_name="Test Account Hello Bank",
-            encrypted_credentials=encrypted_credentials,
-            auto_sync_enabled=True,
-        )
-
-        self.account.bank_connection = self.bank_connection
-        self.account.save()
-
-    def tearDown(self):
-        """Nettoie l'environnement de test."""
-        if "ENCRYPTION_KEY" in os.environ:
-            del os.environ["ENCRYPTION_KEY"]
-
-    @patch("finance.services.sync_service.HelloBankConnector")
-    @patch("finance.services.sync_service.EncryptionService.decrypt_credentials")
-    def test_full_flow_hellobank(self, mock_decrypt, mock_connector_class):
-        """Test du flux complet Hello Bank."""
-        mock_decrypt.return_value = {"username": "test_user", "password": "test_pass"}
-
-        mock_connector = Mock()
-        mock_connector_class.return_value = mock_connector
-        mock_connector.authenticate.return_value = {"session_id": "test_session"}
-        mock_connector.sync_transactions.return_value = [
-            {
-                "posted_at": timezone.now() - timedelta(days=1),
-                "amount": Decimal("-25.00"),
-                "description": "Test transaction Hello Bank",
-                "raw": {"source": "hellobank"},
-            }
-        ]
-
-        result = SyncService.sync_account(self.account, sync_type=SyncLog.SyncType.MANUAL)
-
-        self.assertTrue(result["success"])
-        self.assertEqual(result["transactions_count"], 1)
-
-        sync_log = SyncLog.objects.get(id=result["sync_log_id"])
-        self.assertEqual(sync_log.status, SyncLog.Status.SUCCESS)
-
-
 class TestDuplicateDetectionManualVsSync(TestCase):
     """Tests de détection de doublons entre import manuel et synchronisation."""
 

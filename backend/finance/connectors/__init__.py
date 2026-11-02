@@ -15,42 +15,23 @@ from finance.connectors.base import (
 )
 from finance.connectors.traderepublic import TradeRepublicConnector
 
-# Import conditionnel de BoursoBankConnector et HelloBankConnector (nécessitent Playwright)
+from finance.connectors.enablebanking import EnableBankingConnector
+
+__all__ = [
+    "BaseBankConnector",
+    "BankConnectionError",
+    "AuthenticationError",
+    "RateLimitError",
+    "ConnectionTimeoutError",
+    "InvalidCredentialsError",
+    "TradeRepublicConnector",
+    "EnableBankingConnector",
+]
+
+# BoursoBankConnector nécessite boursobank-scraper (Playwright, Python 3.13+).
 try:
-    from finance.connectors.boursorama import BoursoBankConnector
-    from finance.connectors.hellobank import HelloBankConnector
-    __all__ = [
-        "BaseBankConnector",
-        "BankConnectionError",
-        "AuthenticationError",
-        "RateLimitError",
-        "ConnectionTimeoutError",
-        "InvalidCredentialsError",
-        "TradeRepublicConnector",
-        "BoursoBankConnector",
-        "HelloBankConnector",
-    ]
+    from finance.connectors.boursorama import BoursoBankConnector  # noqa: F401
+
+    __all__.append("BoursoBankConnector")
 except ImportError:
-    # Si Playwright n'est pas disponible, essayer d'importer seulement BoursoBankConnector
-    try:
-        from finance.connectors.boursorama import BoursoBankConnector
-        __all__ = [
-            "BaseBankConnector",
-            "BankConnectionError",
-            "AuthenticationError",
-            "RateLimitError",
-            "ConnectionTimeoutError",
-            "InvalidCredentialsError",
-            "TradeRepublicConnector",
-            "BoursoBankConnector",
-        ]
-    except ImportError:
-        __all__ = [
-            "BaseBankConnector",
-            "BankConnectionError",
-            "AuthenticationError",
-            "RateLimitError",
-            "ConnectionTimeoutError",
-            "InvalidCredentialsError",
-            "TradeRepublicConnector",
-        ]
+    pass

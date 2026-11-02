@@ -37,12 +37,6 @@ except ImportError:
 
 from finance.connectors.enablebanking import EnableBankingConnector
 
-try:
-    from finance.connectors.hellobank import HelloBankConnector
-    PLAYWRIGHT_AVAILABLE = True
-except ImportError:
-    HelloBankConnector = None
-    PLAYWRIGHT_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -103,9 +97,11 @@ class SyncService:
                 )
             return BoursoBankConnector()
         elif provider == BankConnection.Provider.HELLOBANK:
-            if not PLAYWRIGHT_AVAILABLE or HelloBankConnector is None:
-                raise ImportError("Playwright non disponible pour HelloBank.")
-            return HelloBankConnector()
+            # L'ancien scraper n'a jamais fonctionné (anti-robot Hello Bank) :
+            # Hello Bank passe désormais par Enable Banking (DSP2).
+            raise ValueError(
+                "Ancien connecteur Hello Bank retiré : recréer la connexion via « Connecter une banque (DSP2) »."
+            )
         elif provider == BankConnection.Provider.ENABLEBANKING:
             return EnableBankingConnector()
         else:

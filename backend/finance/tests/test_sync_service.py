@@ -98,7 +98,6 @@ class TestSyncService(TestCase):
 
     @patch("finance.services.sync_service.EncryptionService.decrypt_credentials")
     @patch("finance.services.sync_service.BoursoBankConnector")
-    @patch("finance.services.sync_service.PLAYWRIGHT_AVAILABLE", True)
     def test_sync_account_success_boursorama(self, mock_connector_class, mock_decrypt):
         """Test synchronisation réussie avec BoursoBank."""
         # Changer le provider
@@ -124,43 +123,6 @@ class TestSyncService(TestCase):
             }
         ]
         mock_connector.get_balance.return_value = Decimal("500.00")
-        mock_connector.sync_portfolio_valuations.return_value = {}
-
-        # Appeler le service
-        result = SyncService.sync_account(self.account)
-
-        # Vérifications
-        self.assertTrue(result["success"])
-        self.assertEqual(result["transactions_count"], 1)
-
-    @patch("finance.services.sync_service.EncryptionService.decrypt_credentials")
-    @patch("finance.services.sync_service.HelloBankConnector")
-    @patch("finance.services.sync_service.PLAYWRIGHT_AVAILABLE", True)
-    def test_sync_account_success_hellobank(self, mock_connector_class, mock_decrypt):
-        """Test synchronisation réussie avec Hello Bank."""
-        # Changer le provider
-        self.bank_connection.provider = BankConnection.Provider.HELLOBANK
-        self.bank_connection.save()
-
-        # Mock des credentials déchiffrés
-        mock_decrypt.return_value = {
-            "username": "test_user",
-            "password": "test_password",
-        }
-
-        # Mock du connecteur
-        mock_connector = Mock()
-        mock_connector_class.return_value = mock_connector
-        mock_connector.authenticate.return_value = {"session_id": "test_session"}
-        mock_connector.sync_transactions.return_value = [
-            {
-                "posted_at": timezone.now(),
-                "amount": Decimal("-25.00"),
-                "description": "Test transaction Hello Bank",
-                "raw": {"source": "hellobank"},
-            }
-        ]
-        mock_connector.get_balance.return_value = Decimal("250.00")
         mock_connector.sync_portfolio_valuations.return_value = {}
 
         # Appeler le service
