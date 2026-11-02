@@ -5,6 +5,8 @@ Les réponses d'API reprennent la forme réelle observée chez Hello Bank le
 2026-11-02 (aucun identifiant d'opération, soldes CLBD + XPCD, opérations PDNG).
 """
 
+import base64
+import os
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -133,8 +135,17 @@ SESSION = {
 CTX = {"aspsp": "Hello Bank", "country": "FR", "psu_type": "personal", "connection_id": None}
 
 
+def _with_encryption_key(testcase):
+    """Clé Fernet de test : d'autres fichiers de tests retirent ENCRYPTION_KEY de l'environnement."""
+    key = base64.urlsafe_b64encode(os.urandom(32)).decode()
+    patcher = patch.dict(os.environ, {"ENCRYPTION_KEY": key})
+    patcher.start()
+    testcase.addCleanup(patcher.stop)
+
+
 class SessionAndSyncTests(TestCase):
     def setUp(self):
+        _with_encryption_key(self)
         self.user = User.objects.create_user(username="u", password="p")
         self.account = Account.objects.create(
             owner=self.user,
@@ -213,6 +224,7 @@ class SessionAndSyncTests(TestCase):
 
 class ViewsTests(TestCase):
     def setUp(self):
+        _with_encryption_key(self)
         self.user = User.objects.create_user(username="u", password="p")
         self.client.force_login(self.user)
 
