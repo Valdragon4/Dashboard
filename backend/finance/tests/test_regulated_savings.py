@@ -155,3 +155,31 @@ class SettingsPageTests(TestCase):
         resp = self.client.get(reverse("settings"))
         self.assertContains(resp, "Livrets réglementés")
         self.assertContains(resp, "intérêts")
+
+
+class ResyncKeepsDecisionsTests(TestCase):
+    """Une resynchro réécrit raw : les décisions savings_* doivent survivre."""
+
+    def test_retrait_affecte_ne_revient_pas(self):
+        from finance.services.sync_service import SyncService
+
+        user = User.objects.create_user(username="u", password="p")
+        cc = Account.objects.create(owner=user, name="CC", type=Account.AccountType.CHECKING)
+        la = Account.objects.create(owner=user, name="LA", type=Account.AccountType.SAVINGS, savings_product="livret_a")
+        Account.objects.create(owner=user, name="LEP", type=Account.AccountType.SAVINGS, savings_product="lep")
+        data = {
+            "posted_at": at(date(2026, 10, 20)),
+            "amount": Decimal("110"),
+            "description": "VIR CPTE A CPTE RECU /DE M X /MOTIF VIREMENT VERS COMPTE DE CHEQUES /REF",
+            "raw": {"source": "enablebanking", "transaction_id": "eb:abc#1", "sync_fingerprint": "eb:abc#1"},
+        }
+        SyncService._upsert_transaction_from_sync(cc, dict(data, raw=dict(data["raw"])), "enablebanking")
+        rs.mirror_transfers(cc)
+        tx = rs.pending_withdrawals(user)[0]
+        rs.assign_withdrawal(tx, la)
+
+        SyncService._upsert_transaction_from_sync(cc, dict(data, raw=dict(data["raw"])), "enablebanking")
+        stats = rs.mirror_transfers(cc)
+        self.assertEqual(stats["a_affecter"], 0)
+        self.assertEqual(rs.pending_withdrawals(user), [])
+        self.assertEqual(Transaction.objects.filter(account=la).count(), 1)

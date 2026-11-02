@@ -256,6 +256,11 @@ class SyncService:
             ).first()
 
         if existing:
+            # Les décisions prises dans le dashboard (affectation d'un retrait à un
+            # livret…) vivent dans raw sous « savings_* » : la banque ne les connaît pas.
+            kept = {k: v for k, v in (existing.raw or {}).items() if k.startswith("savings_")}
+            if kept:
+                defaults["raw"] = {**defaults.get("raw", {}), **kept}
             for key, value in defaults.items():
                 setattr(existing, key, value)
             existing.description = description
