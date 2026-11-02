@@ -1,18 +1,16 @@
-Django>=4.0,<5.0
-djangorestframework>=3.14.0
-django-cors-headers>=4.0.0
-whitenoise>=6.0.0
-psycopg2-binary
-python-dateutil
-openai>=1.0.0
-PyPDF2>=3.0.0
-celery>=5.0.0
-redis>=4.0.0
-gunicorn>=21.0.0
-websockets>=12.0
-requests>=2.31.0
-curl_cffi>=0.7.0
-pandas>=2.0.0
-cryptography>=41.0.0
-playwright>=1.40.0  # Added for BoursoBank connector (browser automation)
-boursobank-scraper>=0.5.1; python_version >= "3.13"  # BoursoBank auto-login/sync via dedicated scraper
+# Bornes supérieures posées le 2026-10-28 (passe CVE) : montées mineures
+# seulement, une montée majeure se fait à la main avec ses notes de version.
+Django>=4.2,<6.0
+djangorestframework>=3.14.0,<4
+django-cors-headers>=4.0.0,<5
+whitenoise>=6.0.0,<7
+psycopg2-binary<3
+python-dateutil<3
+celery>=5.0.0,<6
+redis>=4.0.0,<9
+gunicorn>=21.0.0,<27
+requests>=2.31.0,<3
+pandas>=2.0.0,<4
+cryptography>=41.0.0,<50
+playwright>=1.40.0,<2  # Added for BoursoBank connector (browser automation)
+boursobank-scraper<0.6

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Erreur{% endblock %} — Finance</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      if (localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark');
+      tailwind.config = {
+        darkMode: 'class',
+        theme: { extend: { colors: { primary: '#6366f1', 'primary-dark': '#4f46e5' } } }
+      }
+    </script>
+  </head>
+  <body class="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center p-6">
+    <div class="max-w-lg w-full text-center">
+
+      <!-- Logo -->
+      <a href="/" class="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-br from-primary to-primary-dark rounded-2xl shadow-lg mb-8">
+        <span class="text-white font-bold text-2xl">$</span>
+      </a>
+
+      <!-- Code d'erreur -->
+      <div class="text-8xl font-black text-gray-200 dark:text-gray-700 select-none leading-none mb-4">
+        {% block code %}???{% endblock %}
+      </div>
+
+      <!-- Message -->
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-3">
+        {% block heading %}Une erreur s'est produite{% endblock %}
+      </h1>
+      <p class="text-gray-500 dark:text-gray-400 text-base mb-8">
+        {% block description %}{% endblock %}
+      </p>
+
+      <!-- Actions -->
+      <div class="flex flex-col sm:flex-row gap-3 justify-center">
+        {% block actions %}
+        <a href="/"
+           class="px-6 py-3 bg-gradient-to-r from-primary to-primary-dark text-white font-semibold rounded-xl shadow-md hover:shadow-lg transition-all text-sm">
+          Retour au dashboard
+        </a>
+        <button onclick="history.back()"
+                class="px-6 py-3 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-semibold rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-sm">
+          Page précédente
+        </button>
+        {% endblock %}
+      </div>
+    </div>
+  </body>
+</html>

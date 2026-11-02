@@ -13,15 +13,10 @@ urlpatterns = [
     path("accounts/<int:account_id>/delete-all-transactions/", views.delete_all_investment_transactions, name="delete_all_investment_transactions"),
     path("reset/user", views.reset_user_finance, name="reset_user_finance"),
     path("settings/", views.settings_view, name="settings"),
-    path("import/upload", views.import_upload, name="import_upload"),
-    path("import/traderepublic", views.traderepublic_import, name="traderepublic_import"),
-    path("api/traderepublic/initiate", views.traderepublic_initiate_login, name="traderepublic_initiate_login"),
-    path("api/traderepublic/resend-2fa", views.traderepublic_resend_2fa, name="traderepublic_resend_2fa"),
-    path("api/traderepublic/verify", views.traderepublic_verify_and_scrape, name="traderepublic_verify_and_scrape"),
     path("api/investments/update-valuation", views.update_investment_valuation, name="update_investment_valuation"),
+    path("api/investments/tri/", views.api_investment_tri, name="api_investment_tri"),
     path("api/accounts/<int:account_id>/toggle-dashboard", views.toggle_account_in_dashboard, name="toggle_account_in_dashboard"),
     path("api/transactions/<int:transaction_id>/update-category", views.update_transaction_category, name="update_transaction_category"),
-    path("api/traderepublic/import-pdf", views.import_traderepublic_pdf, name="import_traderepublic_pdf"),
     # API pour synchronisation manuelle depuis la liste des comptes (Story 1.9)
     path("api/accounts/<int:account_id>/sync/", views.account_sync_api, name="account_sync_api"),
     # Connexions bancaires (Story 1.8)
@@ -35,6 +30,18 @@ urlpatterns = [
     path("bank-connections/logs/", views.sync_logs_list, name="sync_logs_list"),
     path("bank-connections/logs/<int:log_id>/", views.sync_log_detail, name="sync_log_detail"),
     path("bank-connections/logs/export/", views.sync_logs_export, name="sync_logs_export"),
+    # Gestion des invitations utilisateur (superuser uniquement)
+    path("users/invitations/", views.invitation_list, name="invitation_list"),
+    path("users/invitations/new/", views.invitation_create, name="invitation_create"),
+    path("users/invitations/<uuid:token>/delete/", views.invitation_delete, name="invitation_delete"),
+    # Inscription via invitation (public)
+    path("invite/<uuid:token>/", views.register_with_invitation, name="register_with_invitation"),
+    # Gestion des utilisateurs (superuser uniquement)
+    path("users/", views.user_list, name="user_list"),
+    path("users/<int:user_id>/reset-password/", views.user_reset_password, name="user_reset_password"),
+    path("users/<int:user_id>/delete/", views.user_delete, name="user_delete"),
+    path("users/<int:user_id>/toggle-active/", views.user_toggle_active, name="user_toggle_active"),
+    path("users/<int:user_id>/toggle-superuser/", views.user_toggle_superuser, name="user_toggle_superuser"),
 ]
 
 

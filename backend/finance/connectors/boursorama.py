@@ -1,781 +1,1180 @@
 """
-Connecteur BoursoBank basé sur `boursobank-scraper`.
+Connecteur BoursoBank pour synchronisation automatique.
+
+Pipeline simplifié et borné en temps :
+  1. Auth via boursobank_scraper (Playwright headless + proxy SOCKS)
+  2. Listing comptes depuis /budget/mouvements (DOM robuste)
+  3. Récupération transactions via interception réseau Playwright + fallback DOM
+  4. Solde lu depuis l'objet compte déjà chargé (pas de re-navigation)
 """
 
-from __future__ import annotations
-
-import hashlib
+import base64
 import json
 import logging
+import re
 import time
-from dataclasses import dataclass
-from datetime import datetime
-from decimal import Decimal, InvalidOperation
+from datetime import datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Dict, List, Optional
 
 from django.conf import settings
 from django.utils import timezone
-import yaml
 
 from finance.connectors.base import (
     AuthenticationError,
     BankConnectionError,
-    BaseBankConnector,
     ConnectionTimeoutError,
     InvalidCredentialsError,
-    RateLimitError,
+    BaseBankConnector,
 )
+from finance.models import BankAccountLink
 
 logger = logging.getLogger(__name__)
 
 try:
-    from boursobank_scraper import BoursoScraper
-
-    BOURSOBANK_SCRAPER_AVAILABLE = True
+    from boursobank_scraper import BoursoScraper, BoursoAccount
+    SCRAPER_AVAILABLE = True
 except ImportError:
-    BoursoScraper = None  # type: ignore[assignment]
-    BOURSOBANK_SCRAPER_AVAILABLE = False
+    SCRAPER_AVAILABLE = False
 
 
 class BoursoBankConnector(BaseBankConnector):
-    """Connecteur BoursoBank utilisant la librairie `boursobank-scraper`."""
+    """
+    Connecteur BoursoBank.
 
-    def __init__(self, data_path: Optional[Path] = None):
-        if not BOURSOBANK_SCRAPER_AVAILABLE or BoursoScraper is None:
+    Utilise boursobank_scraper pour l'authentification Playwright,
+    puis récupère les transactions via l'API JSON interne de BoursoBank
+    (appel fetch dans le contexte de la page authentifiée).
+    """
+
+    def __init__(self):
+        if not SCRAPER_AVAILABLE:
             raise ImportError(
-                "Le package boursobank-scraper est requis pour BoursoBank "
-                "(attention: il nécessite Python >= 3.13)."
+                "boursobank_scraper non disponible. "
+                "Installez-le avec: pip install boursobank-scraper "
+                "(Python 3.13+ requis)"
             )
-        self.root_data_path = data_path or Path(
-            getattr(settings, "BOURSOBANK_DATA_DIR", settings.BASE_DIR / "boursobank-data")
-        )
-        self.root_data_path.mkdir(parents=True, exist_ok=True)
-        self.scraper = None
+        self._scraper: Optional["BoursoScraper"] = None
+        self._accounts: List["BoursoAccount"] = []
+        self._selected_account: Optional["BoursoAccount"] = None
         self._authenticated = False
-        self._accounts = {}
-        self._username = None
-        self.timeout_ms = int(getattr(settings, "BOURSOBANK_TIMEOUT_MS", 120000))
-        self.security_wait_seconds = int(getattr(settings, "BOURSOBANK_SECURITY_WAIT_SECONDS", 180))
-        self.headless = bool(getattr(settings, "BOURSOBANK_HEADLESS", True))
-        self.save_trace = bool(getattr(settings, "BOURSOBANK_SAVE_TRACE", True))
-        # Proxy optionnel (ex: "socks5://host.docker.internal:1080") pour router le
-        # trafic Playwright via une IP résidentielle. Requis si BoursoBank bloque l'IP
-        # du serveur avec "opération non aboutie - service d'anonymisation détecté".
-        self.proxy = getattr(settings, "BOURSOBANK_PROXY", "") or ""
-
-    @dataclass
-    class _Account:
-        id: str
-        name: str
-        balance: Decimal
-        link: str
+        self._data_dir = Path(getattr(settings, "BOURSOBANK_DATA_DIR", "/tmp/boursobank-data"))
+        self._target_account_number = _normalize_digits(
+            getattr(settings, "BOURSOBANK_ACCOUNT_NUMBER", "")
+        )
 
     @property
     def provider_name(self) -> str:
         return "BoursoBank"
 
+    # ------------------------------------------------------------------
+    # Auth
+    # ------------------------------------------------------------------
+
     def authenticate(self, credentials: Dict) -> Dict:
         username = credentials.get("username")
         password = credentials.get("password")
-
         if not username or not password:
             raise InvalidCredentialsError("username et password sont requis")
 
-        self.disconnect()
-        self._username = str(username)
+        account_number = credentials.get("account_number")
+        if account_number:
+            self._target_account_number = _normalize_digits(account_number)
+
+        t0 = time.monotonic()
+        self._data_dir.mkdir(parents=True, exist_ok=True)
+
+        self._scraper = BoursoScraper(
+            username=username,
+            password=password,
+            rootDataPath=self._data_dir,
+            headless=getattr(settings, "BOURSOBANK_HEADLESS", True),
+            timeout=int(getattr(settings, "BOURSOBANK_TIMEOUT_MS", 60000)),
+            saveTrace=False,
+        )
+
+        proxy_server = (getattr(settings, "BOURSOBANK_PROXY", "") or "").strip()
+        if proxy_server:
+            try:
+                self._scraper.browser.close()
+            except Exception:
+                pass
+            self._scraper.browser = self._scraper.playwright.chromium.launch(
+                headless=getattr(settings, "BOURSOBANK_HEADLESS", True),
+                proxy={"server": proxy_server},
+            )
+            logger.info("BoursoBank: proxy %s", proxy_server)
+
+        _patch_scraper_login(self._scraper)
+
+        auth_timeout = int(getattr(settings, "BOURSOBANK_AUTH_TIMEOUT_MS", 30000))
+        original_timeout = getattr(self._scraper, "timeout", None)
+        try:
+            if original_timeout is not None:
+                self._scraper.timeout = auth_timeout
+            logged_in = self._scraper.connect()
+        except Exception as e:
+            elapsed = int((time.monotonic() - t0) * 1000)
+            return self._handle_auth_error(e, elapsed)
+        finally:
+            if original_timeout is not None and self._scraper:
+                self._scraper.timeout = original_timeout
+
+        elapsed = int((time.monotonic() - t0) * 1000)
+
+        if not logged_in:
+            self._safe_disconnect()
+            raise InvalidCredentialsError("Identifiant ou mot de passe BoursoBank invalide.")
 
         try:
-            # Isoler les données de session par utilisateur bancaire.
-            user_hash = hashlib.sha256(self._username.encode("utf-8")).hexdigest()[:16]
-            user_data_path = self.root_data_path / user_hash
-            user_data_path.mkdir(parents=True, exist_ok=True)
-            self._write_config_yaml(
-                user_data_path=user_data_path,
-                username=self._username,
-                password=str(password),
-            )
-
-            self.scraper = BoursoScraper(
-                username=self._username,
-                password=str(password),
-                rootDataPath=user_data_path,
-                headless=self.headless,
-                timeout=self.timeout_ms,
-                saveTrace=self.save_trace,
-            )
-            self._configure_browser()
-            connected = bool(self.scraper.connect())
-            if not connected:
-                accounts = self._safe_list_accounts()
-                if not accounts:
-                    raise InvalidCredentialsError("Échec de connexion BoursoBank (identifiants invalides).")
-            else:
-                accounts = self._safe_list_accounts()
-            self._accounts = {acc.id: acc for acc in accounts}
-            self._authenticated = True
-            return {
-                "session_id": "boursobank_scraper_session",
-                "accounts_count": len(accounts),
-                "data_path": str(user_data_path),
-            }
-        except InvalidCredentialsError:
-            raise
+            self._accounts = self._list_accounts()
         except Exception as e:
-            error = str(e).lower()
+            logger.warning("BoursoBank: listing comptes echoue apres login (%s)", e)
+            self._accounts = []
 
-            # ── Vérifier la sécurisation EN PREMIER, avant tout appel qui naviguerait la page.
-            # _safe_list_accounts() appelle listAccounts() qui fait un goto() et perturberait
-            # l'état de la page de sécurisation avant qu'on ait pu cliquer "Suivant".
-            if self._is_step_up_authentication_required(error) or self._is_on_securisation_page():
-                # Le bouton "Suivant" est un <a> lien sur la page /securisation.
-                # Ce clic déclenche l'envoi du code SMS/notification app à l'utilisateur.
-                code_sent = self._trigger_securisation_code_send()
-                if code_sent:
-                    # Pause obligatoire de 30 s après l'envoi du code :
-                    # toute action sur la page pendant ce délai perturberait le flow 2FA.
-                    logger.info(
-                        "BoursoBank sécurisation: pause 30 s après l'envoi du code 2FA."
-                    )
-                    time.sleep(30)
-                # Attendre que l'utilisateur valide (passkey, SMS, notification app…).
-                if self._wait_for_security_validation_completion():
-                    accounts = self._safe_list_accounts()
-                    self._accounts = {acc.id: acc for acc in accounts}
-                    self._authenticated = True
-                    return {
-                        "session_id": "boursobank_scraper_session",
-                        "accounts_count": len(accounts),
-                        "data_path": str(user_data_path),
-                    }
-                logger.info(
-                    "Authentification renforcée BoursoBank détectée (securisation). "
-                    "Code envoyé=%s. Retour requires_2fa.",
-                    code_sent,
-                )
-                self.disconnect()
-                return {
-                    "requires_2fa": True,
-                    "code_sent": code_sent,
-                    "message": (
-                        "Un code à usage unique a été envoyé sur votre téléphone BoursoBank. "
-                        "Validez la connexion depuis l'application ou par SMS, "
-                        "puis relancez la synchronisation."
-                        if code_sent
-                        else (
-                            "Validation supplémentaire requise sur BoursoBank "
-                            "(page de sécurisation détectée). "
-                            "Connectez-vous manuellement pour valider ce nouvel appareil."
-                        )
-                    ),
-                }
+        self._authenticated = True
+        logger.info(
+            "BoursoBank: auth OK en %dms, %d compte(s)",
+            elapsed,
+            len(self._accounts),
+        )
+        return {"session_id": "boursobank_scraper", "cookies": [], "expires_at": None}
 
-            # Pas de sécurisation — tenter une récupération via listing de comptes.
-            recovered_accounts = self._safe_list_accounts()
-            if recovered_accounts:
-                logger.info(
-                    "Session BoursoBank récupérée malgré une erreur de login scraper; "
-                    "les comptes sont accessibles."
-                )
-                self._accounts = {acc.id: acc for acc in recovered_accounts}
-                self._authenticated = True
-                return {
-                    "session_id": "boursobank_scraper_session",
-                    "accounts_count": len(recovered_accounts),
-                    "data_path": str(user_data_path),
-                }
-            self.disconnect()
-            if "err_proxy_connection_failed" in error or "proxy_connection_failed" in error:
-                raise AuthenticationError(
-                    f"Proxy BoursoBank injoignable ({self.proxy}). "
-                    "Vérifiez que le tunnel SSH est actif et écoute sur 0.0.0.0 :\n"
-                    "  ssh -D 0.0.0.0:1080 -N -f user@votre-machine-perso\n"
-                    "Ou désactivez le proxy en commentant BOURSOBANK_PROXY dans .env."
-                ) from e
-            if "timeout" in error:
-                raise ConnectionTimeoutError(f"Timeout lors de l'authentification: {e}") from e
-            if "429" in error or "rate limit" in error:
-                raise RateLimitError(f"Rate limit lors de l'authentification: {e}") from e
-            raise AuthenticationError(f"Erreur lors de l'authentification BoursoBank: {e}") from e
+    def _handle_auth_error(self, exc: Exception, elapsed_ms: int) -> Dict:
+        err = str(exc).lower()
+
+        if "securisation" in err or "/securisation" in err:
+            logger.info("BoursoBank: securisation/2FA detectee (%dms)", elapsed_ms)
+            return {
+                "requires_2fa": True,
+                "message": "BoursoBank demande une securisation (2FA).",
+            }
+
+        page = getattr(self._scraper, "page", None)
+        current_url = ""
+        try:
+            current_url = page.url if page else ""
+        except Exception:
+            pass
+
+        if page and "/budget/mouvements" in current_url:
+            logger.info(
+                "BoursoBank: login upstream timeout mais URL budget OK (%s, %dms)",
+                current_url,
+                elapsed_ms,
+            )
+            try:
+                self._accounts = self._list_accounts()
+            except Exception:
+                self._accounts = []
+            self._authenticated = True
+            return {"session_id": "boursobank_scraper", "cookies": [], "expires_at": None}
+
+        self._safe_disconnect()
+
+        timeout_sigs = ("timeout", "net::err_timed_out", "target closed", "target crashed")
+        if any(s in err for s in timeout_sigs):
+            raise ConnectionTimeoutError(
+                f"BoursoBank: timeout authentification ({elapsed_ms}ms)"
+            )
+
+        raise AuthenticationError(f"BoursoBank: echec authentification ({elapsed_ms}ms)")
+
+    # ------------------------------------------------------------------
+    # Transactions
+    # ------------------------------------------------------------------
 
     def sync_transactions(self, account, since: Optional[datetime] = None) -> List[Dict]:
-        self._ensure_authenticated()
-        try:
-            bourso_account = self._select_boursobank_account(account)
+        if not self._authenticated or not self._scraper:
+            raise AuthenticationError("Session non authentifiee.")
+
+        t0 = time.monotonic()
+
+        if not self._accounts:
             try:
-                self.scraper.saveNewTransactionsForAccount(bourso_account)
-            except Exception as scraper_err:
-                err_str = str(scraper_err)
-                # Erreur 1 : notre _configure_browser() remplace le contexte Playwright
-                # sans démarrer le tracing. Le scraper appelle stopTracing() à la fin, ce
-                # qui échoue. Les transactions sont déjà sur le disque — on ignore.
-                if "must start tracing before stopping" in err_str.lower():
-                    logger.warning(
-                        "BoursoBank: stopTracing() a échoué (tracing non démarré sur "
-                        "le contexte modifié) — ignoré, les transactions sont disponibles."
-                    )
-                # Erreur 2 : le scraper essaie de déplacer un fichier d'autorisation
-                # de authorization/old/ vers authorization/new/ alors que le fichier
-                # source n'existe plus (déjà traité lors d'un run précédent ou structure
-                # différente). Les transactions sont déjà écrites sur le disque — on ignore.
-                elif isinstance(scraper_err, (FileNotFoundError, OSError)) and (
-                    "authorization" in err_str and "old" in err_str
-                ):
-                    logger.warning(
-                        "BoursoBank: déplacement de fichier d'autorisation échoué "
-                        "(fichier déjà traité) — ignoré : %s",
-                        err_str,
-                    )
-                else:
-                    raise
-            finally:
-                # Playwright peut laisser une boucle asyncio dans un état « running »
-                # après certaines exceptions, ce qui ferait déclencher
-                # SynchronousOnlyOperation sur tous les appels ORM qui suivent.
-                # On réinitialise proprement la boucle du thread courant.
-                import asyncio as _asyncio
-                try:
-                    _asyncio.set_event_loop(_asyncio.new_event_loop())
-                except Exception:
-                    pass
-            operations = self._load_operations_for_account(bourso_account.id)
+                self._accounts = self._list_accounts()
+            except Exception as e:
+                logger.warning("BoursoBank: re-listing comptes echoue: %s", e)
 
-            # On ne filtre PAS par `since` : le scraper gère lui-même les fichiers
-            # "déjà vus" sur disque (saveNewTransactionsForAccount). Filtrer par date
-            # ferait manquer les opérations dont le posted_at est antérieur à
-            # last_sync_at mais qui viennent juste d'être validées par la banque
-            # (ex : opération du 3 avril validée le 9 avril).
-            # La déduplication est assurée par transaction_id dans _upsert_transaction_from_sync.
-            transactions: List[Dict] = []
-            for operation in operations:
-                tx = self._map_operation_to_transaction(operation)
-                if tx is None:
-                    continue
-                tx["posted_at"] = self._to_aware_datetime(tx["posted_at"])
-                transactions.append(tx)
-
-            transactions.sort(key=lambda t: t["posted_at"])
-            return transactions
-        except (AuthenticationError, ConnectionTimeoutError, RateLimitError):
-            raise
+        try:
+            bourso_account = self._pick_account(account)
         except Exception as e:
-            error = str(e).lower()
-            if "timeout" in error:
-                raise ConnectionTimeoutError(f"Timeout lors de la récupération des transactions: {e}") from e
-            if "429" in error or "rate limit" in error:
-                raise RateLimitError(f"Rate limit lors de la récupération des transactions: {e}") from e
-            raise BankConnectionError(f"Erreur lors de la récupération des transactions: {e}") from e
+            logger.warning("BoursoBank: selection compte echoue: %s", e)
+            return []
+
+        self._selected_account = bourso_account
+        transactions = self._fetch_transactions_via_api(bourso_account, since=since)
+        before_pending_filter = len(transactions)
+        transactions = [tx for tx in transactions if not _is_pending_transaction(tx)]
+        pending_skipped = before_pending_filter - len(transactions)
+        if pending_skipped > 0:
+            logger.info("BoursoBank: %d operation(s) pending ignoree(s)", pending_skipped)
+
+        if since:
+            since_cmp = since
+            if timezone.is_naive(since_cmp):
+                since_cmp = timezone.make_aware(since_cmp, timezone.get_current_timezone())
+            before_filter = len(transactions)
+            transactions = [
+                tx for tx in transactions
+                if tx.get("posted_at") and tx["posted_at"] > since_cmp
+            ]
+            if before_filter > 0 and not transactions:
+                logger.info(
+                    "BoursoBank: filtre since=%s a retire toutes les transactions (%d). "
+                    "Sync complete retournee pour eviter une sync vide.",
+                    since_cmp.isoformat(),
+                    before_filter,
+                )
+                transactions = self._fetch_transactions_via_api(bourso_account)
+
+        elapsed = int((time.monotonic() - t0) * 1000)
+        logger.info(
+            "BoursoBank: %d transaction(s) pour %s en %dms",
+            len(transactions),
+            bourso_account.id,
+            elapsed,
+        )
+        return transactions
+
+    # ------------------------------------------------------------------
+    # Balance
+    # ------------------------------------------------------------------
 
     def get_balance(self, account) -> Decimal:
-        self._ensure_authenticated()
+        if not self._authenticated:
+            raise AuthenticationError("Session non authentifiee.")
+
+        if self._selected_account:
+            return Decimal(str(self._selected_account.balance))
+
+        if not self._accounts:
+            try:
+                self._accounts = self._list_accounts()
+            except Exception:
+                pass
+
         try:
-            accounts = self._safe_list_accounts()
-            # Ne pas écraser self._accounts avec une liste vide :
-            # après sync_transactions() le navigateur peut être sur une autre page
-            # et la récupération peut échouer. On conserve les comptes déjà connus.
-            if accounts:
-                self._accounts = {acc.id: acc for acc in accounts}
-            bourso_account = self._select_boursobank_account(account)
-            return Decimal(str(bourso_account.balance)).quantize(Decimal("1.00"))
-        except (InvalidOperation, ValueError) as e:
-            raise BankConnectionError(f"Solde invalide retourné par BoursoBank: {e}") from e
+            bourso_account = self._pick_account(account)
+            return Decimal(str(bourso_account.balance))
         except Exception as e:
-            error = str(e).lower()
-            if "timeout" in error:
-                raise ConnectionTimeoutError(f"Timeout lors de la récupération du solde: {e}") from e
-            raise BankConnectionError(f"Erreur lors de la récupération du solde: {e}") from e
+            raise BankConnectionError(f"BoursoBank: solde indisponible ({e})")
+
+    # ------------------------------------------------------------------
+    # Disconnect
+    # ------------------------------------------------------------------
 
     def disconnect(self) -> None:
-        if self.scraper:
+        self._safe_disconnect()
+        logger.info("BoursoBank: deconnexion OK")
+
+    def _safe_disconnect(self) -> None:
+        if self._scraper is not None:
             try:
-                self.scraper.close()
+                self._scraper.close()
             except Exception:
-                logger.debug("Erreur ignorée lors de la fermeture du scraper BoursoBank", exc_info=True)
-        self.scraper = None
-        self._accounts = {}
+                pass
+            self._scraper = None
+        self._accounts = []
+        self._selected_account = None
         self._authenticated = False
-        self._username = None
 
-    def _ensure_authenticated(self) -> None:
-        if not self._authenticated or not self.scraper:
-            raise AuthenticationError("Session non authentifiée. Authentifiez-vous d'abord.")
+    # ------------------------------------------------------------------
+    # Listing comptes
+    # ------------------------------------------------------------------
 
-    def _select_boursobank_account(self, account):
+    def _list_accounts(self) -> List["BoursoAccount"]:
+        page = getattr(self._scraper, "page", None)
+        if page is None:
+            raise BankConnectionError("Page Playwright indisponible.")
+
+        if "/budget/mouvements" not in page.url:
+            page.goto(
+                f"{self._scraper.apiUrl}/budget/mouvements",
+                timeout=int(getattr(settings, "BOURSOBANK_TIMEOUT_MS", 60000)),
+            )
+
+        raw_accounts = page.evaluate(
+            """() => {
+                const normalizeText = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                const out = [];
+                const roots = Array.from(document.querySelectorAll(
+                    'a.c-info-box__link-wrapper, a[href*="/compte/"], a[href*="/budget/mouvements"], [data-account-label]'
+                ));
+                for (const rootEl of roots) {
+                    const accountRoot = rootEl.closest('.c-info-box__account, .c-info-box__link-wrapper') || rootEl;
+                    const labelEl = accountRoot.querySelector('[data-account-label]') || rootEl;
+                    const guid = normalizeText(labelEl?.getAttribute('data-account-label'));
+                    if (!guid) continue;
+
+                    const name = normalizeText(
+                        labelEl?.textContent
+                        || accountRoot.getAttribute('title')
+                        || 'BoursoBank'
+                    );
+                    const balanceEl = accountRoot.querySelector('.c-info-box__account-balance, [class*="balance"]');
+                    const balanceText = normalizeText(balanceEl?.textContent);
+
+                    let href = normalizeText(accountRoot.getAttribute('href'));
+                    if (!href) {
+                        const linkEl = accountRoot.querySelector('a[href*="/compte/"], a[href*="/budget/mouvements"]');
+                        href = normalizeText(linkEl?.getAttribute('href'));
+                    }
+                    out.push({ guid, name, balanceText, href });
+                }
+                return out;
+            }"""
+        )
+
+        accounts: List["BoursoAccount"] = []
+        seen: set = set()
+        for item in raw_accounts or []:
+            try:
+                guid = (item.get("guid") or "").strip()
+                if not guid or guid in seen:
+                    continue
+                seen.add(guid)
+                name = (item.get("name") or "").strip() or "BoursoBank"
+                balance = self._scraper.cleanAmount(item.get("balanceText") or "0")
+                href = (item.get("href") or "").strip()
+                link = f"{self._scraper.apiUrl}{href}" if href.startswith("/") else href
+                if not link:
+                    link = f"{self._scraper.apiUrl}/budget/mouvements"
+                accounts.append(BoursoAccount(guid, name, balance, link))
+            except Exception:
+                continue
+
+        if not accounts:
+            raise BankConnectionError(
+                "Aucun compte detecte sur /budget/mouvements."
+            )
+        for acc in accounts:
+            logger.info("BoursoBank: compte id=%s name=%s balance=%s link=%s", acc.id, acc.name, acc.balance, acc.link)
+        logger.info("BoursoBank: %d compte(s) detecte(s)", len(accounts))
+        return accounts
+
+    # ------------------------------------------------------------------
+    # Sélection compte cible
+    # ------------------------------------------------------------------
+
+    def _pick_account(self, account) -> "BoursoAccount":
         if not self._accounts:
-            raise BankConnectionError("Aucun compte BoursoBank disponible après authentification.")
+            raise BankConnectionError("Aucun compte BoursoBank disponible.")
 
-        if len(self._accounts) == 1:
-            return next(iter(self._accounts.values()))
+        if self._target_account_number:
+            matched = self._find_account_by_number(self._target_account_number)
+            if matched:
+                for ext in self._accounts:
+                    if ext.id == matched:
+                        return ext
+
+        connection = getattr(account, "bank_connection", None)
+        if connection is not None:
+            try:
+                link = (
+                    BankAccountLink.objects.filter(
+                        connection=connection, account=account, disabled=False,
+                    )
+                    .exclude(external_account_id="")
+                    .first()
+                )
+                if link:
+                    for ext in self._accounts:
+                        if ext.id == link.external_account_id:
+                            return ext
+            except Exception:
+                pass
 
         account_name = (getattr(account, "name", "") or "").strip().lower()
-        account_iban = (getattr(account, "iban", "") or "").strip().lower()
+        selected = None
+        if account_name:
+            for ext in self._accounts:
+                if account_name in ext.name.lower() or ext.name.lower() in account_name:
+                    selected = ext
+                    break
 
-        for candidate in self._accounts.values():
-            candidate_name = (getattr(candidate, "name", "") or "").strip().lower()
-            if account_name and (account_name in candidate_name or candidate_name in account_name):
-                return candidate
-            if account_iban and account_iban in candidate_name:
-                return candidate
+        if selected is None:
+            for ext in self._accounts:
+                ext_link = getattr(ext, "link", "") or ""
+                if "/compte/cav/" in ext_link or "/compte/chq/" in ext_link:
+                    selected = ext
+                    break
+            if selected is None:
+                selected = self._accounts[0]
+            if len(self._accounts) > 1:
+                logger.warning(
+                    "BoursoBank: pas de match strict pour '%s', utilisation de '%s'",
+                    getattr(account, "name", ""),
+                    selected.name,
+                )
 
-        return next(iter(self._accounts.values()))
-
-    def _load_operations_for_account(self, account_id: str) -> List[Dict]:
-        assert self.scraper is not None  # garanti par _ensure_authenticated
-        transactions_path = self.scraper.transactionsPath / account_id
-        if not transactions_path.exists():
-            return []
-
-        operations: List[Dict] = []
-        for file_path in transactions_path.rglob("*.json"):
-            if "authorization" in file_path.parts:
-                continue
-            if "invalid" in file_path.parts:
-                continue
+        if connection is not None:
             try:
-                payload = json.loads(file_path.read_text(encoding="utf-8"))
-                operations.append(payload)
+                BankAccountLink.objects.update_or_create(
+                    connection=connection,
+                    account=account,
+                    defaults={
+                        "external_account_id": selected.id,
+                        "name": selected.name or "",
+                        "currency": "EUR",
+                        "raw": {"source": "boursorama"},
+                        "disabled": False,
+                    },
+                )
             except Exception:
-                logger.debug("Transaction JSON illisible ignorée: %s", file_path, exc_info=True)
-        return operations
+                pass
 
-    def _map_operation_to_transaction(self, payload: Dict) -> Optional[Dict]:
-        operation = payload.get("operation") or {}
-        operation_id = operation.get("id")
-        amount = operation.get("amount")
+        return selected
 
-        if amount is None:
+    def _find_account_by_number(self, account_number: str) -> Optional[str]:
+        page = getattr(self._scraper, "page", None) if self._scraper else None
+        if not page:
             return None
-
-        posted_at = self._extract_operation_date(operation)
-        if posted_at is None:
+        number = _normalize_digits(account_number)
+        if not number:
             return None
-
-        labels = operation.get("labels") or []
-        label_values = [lbl.get("body", "").strip() for lbl in labels if isinstance(lbl, dict)]
-        description = (" - ".join([txt for txt in label_values if txt]) or "Transaction BoursoBank")[:512]
-
-        # Extraire la catégorie BoursoBank — label et parentLabel correspondent
-        # directement aux noms de Category dans notre base (initialisées depuis le
-        # référentiel BoursoBank). Le lookup se fait dans sync_service.
-        boursobank_category = operation.get("category") or {}
-        category_label = boursobank_category.get("label") or ""
-        category_parent_label = boursobank_category.get("parentLabel") or ""
-
-        raw = {
-            "source": "boursorama",
-            "transaction_id": operation_id,
-            "status": ((operation.get("status") or {}).get("id")),
-            "boursobank_category_label": category_label,
-            "boursobank_category_parent_label": category_parent_label,
-            "raw_operation": operation,
-        }
-
         try:
-            amount_dec = Decimal(str(amount)).quantize(Decimal("1.00"))
-        except InvalidOperation:
-            return None
-
-        return {
-            "posted_at": posted_at,
-            "amount": amount_dec,
-            "description": description,
-            "raw": raw,
-        }
-
-    def _extract_operation_date(self, operation: Dict) -> Optional[datetime]:
-        dates = operation.get("dates") or []
-        date_value = None
-        for date_obj in dates:
-            if not isinstance(date_obj, dict):
-                continue
-            if date_obj.get("type") == "operation_date":
-                date_value = date_obj.get("date")
-                break
-        if not date_value:
-            return None
-
-        try:
-            return datetime.fromisoformat(str(date_value).replace("Z", "+00:00"))
-        except ValueError:
-            return None
-
-    def _to_aware_datetime(self, value: Optional[datetime]) -> datetime:
-        if value is None:
-            return timezone.now()
-        if timezone.is_naive(value):
-            return timezone.make_aware(value, timezone.get_current_timezone())
-        return value
-
-    def _configure_browser(self) -> None:
-        """
-        Reconfigure le navigateur Playwright du scraper avec :
-        - flags Chromium anti-détection (désactive AutomationControlled)
-        - user-agent Windows/Chrome réaliste (pas "HeadlessChrome")
-        - script stealth injecté sur chaque page (masque navigator.webdriver, plugins…)
-        - proxy optionnel si BOURSOBANK_PROXY est défini
-
-        BoursoBank (et son système de fraude) détecte les navigateurs automatisés via
-        plusieurs vecteurs : navigator.webdriver, User-Agent HeadlessChrome, absence de
-        plugins, viewport nul, etc. — et affiche "opération non aboutie - service
-        d'anonymisation détecté", même depuis une IP résidentielle.
-
-        La technique : on remplace le browser lancé par BoursoScraper par un nouveau avec
-        les bons paramètres, puis on monkey-patche `browser.new_context` pour que chaque
-        contexte créé par le scraper hérite du user-agent et du script stealth.
-        """
-        if not self.scraper:
-            return
-        try:
-            proxy_config = {"server": self.proxy} if self.proxy else None
-            if proxy_config:
-                logger.info("BoursoBank: proxy activé → %s", self.proxy)
-
-            self.scraper.browser.close()
-            self.scraper.browser = self.scraper.playwright.chromium.launch(
-                headless=self.headless,
-                slow_mo=500,
-                proxy=proxy_config,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-dev-shm-usage",
-                    "--no-sandbox",
-                    "--disable-infobars",
-                    "--window-size=1280,720",
-                ],
-            )
-
-            # Monkey-patch new_context pour injecter user-agent + stealth sur chaque page.
-            # BoursoScraper appelle self.browser.new_context(...) dans connect() — notre
-            # version patché est donc appelée à chaque ouverture de contexte.
-            original_new_context = self.scraper.browser.new_context
-            stealth_script = self._stealth_init_script()
-
-            def _stealth_new_context(*args, **kwargs):
-                if "user_agent" not in kwargs:
-                    kwargs["user_agent"] = (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/124.0.0.0 Safari/537.36"
-                    )
-                if "viewport" not in kwargs:
-                    kwargs["viewport"] = {"width": 1280, "height": 720}
-                if "locale" not in kwargs:
-                    kwargs["locale"] = "fr-FR"
-                ctx = original_new_context(*args, **kwargs)
-                logger.info("BoursoBank: init_script stealth injecté dans le contexte.")
-                ctx.add_init_script(stealth_script)
-                logger.info("BoursoBank: auto-accepteur Didomi actif (init script).")
-                # Bloquer les appels API Didomi vers ses CDN externes.
-                # Didomi est bundlé dans le JS BoursoBank MAIS fait des appels réseau vers
-                # ses propres serveurs (config, consentement…). Sans ces appels, Didomi ne
-                # s'initialise pas et n'affiche pas sa bannière. C'est ce qui permettait
-                # la récupération de session dans les runs précédents.
-                for pattern in [
-                    "**/sdk.privacy-center.org/**",
-                    "**/api.privacy-center.org/**",
-                    "**/privacy-center.org/**",
-                    "**/*didomi*.js*",
-                    "**/*didomi*.json*",
-                ]:
-                    ctx.route(pattern, lambda route: route.abort())
-                logger.info("BoursoBank: appels réseau Didomi bloqués dans le contexte.")
-                return ctx
-
-            self.scraper.browser.new_context = _stealth_new_context
-            logger.info(
-                "BoursoBank: navigateur reconfiguré (stealth + UA réaliste%s).",
-                f" + proxy {self.proxy}" if self.proxy else "",
-            )
-        except Exception:
-            logger.warning(
-                "BoursoBank: impossible de reconfigurer le navigateur (stealth/proxy)",
-                exc_info=True,
-            )
-
-    @staticmethod
-    def _stealth_init_script() -> str:
-        """
-        Script JS injecté sur chaque page pour :
-        1. Masquer les indicateurs d'automation (navigator.webdriver, UA HeadlessChrome…)
-        2. Supprimer la bannière de consentement RGPD Didomi qui intercepte les clics
-           et empêche le scraper de cliquer sur "Mémoriser mon identifiant" lors du login.
-        """
-        return """
-        (() => {
-            // ── 1. Masquage des indicateurs d'automation ──────────────────────────────
-
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined,
-                configurable: true,
-            });
-
-            const driverKeys = [
-                '__driver_evaluate', '__webdriver_evaluate', '__selenium_evaluate',
-                '__fxdriver_evaluate', '__driver_unwrapped', '__webdriver_unwrapped',
-                '__selenium_unwrapped', '__fxdriver_unwrapped', '__webdriverFunc',
-            ];
-            driverKeys.forEach(k => { try { delete window[k]; } catch (_) {} });
-
-            const fakePluigns = [
-                { name: 'PDF Viewer', filename: 'internal-pdf-viewer', description: '' },
-                { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' },
-                { name: 'Native Client', filename: 'internal-nacl-plugin', description: '' },
-            ];
-            Object.defineProperty(navigator, 'plugins', {
-                get: () => {
-                    const arr = [...fakePluigns];
-                    arr.refresh = () => {};
-                    arr.item = i => arr[i] ?? null;
-                    arr.namedItem = n => arr.find(p => p.name === n) ?? null;
-                    Object.defineProperty(arr, 'length', { get: () => fakePluigns.length });
-                    return arr;
-                },
-                configurable: true,
-            });
-
-            Object.defineProperty(navigator, 'languages', {
-                get: () => ['fr-FR', 'fr', 'en-US', 'en'],
-                configurable: true,
-            });
-
-            const _origQuery = window.navigator.permissions?.query?.bind(navigator.permissions);
-            if (_origQuery) {
-                navigator.permissions.query = params =>
-                    params.name === 'notifications'
-                        ? Promise.resolve({ state: Notification.permission })
-                        : _origQuery(params);
-            }
-
-            if (!window.chrome) { window.chrome = {}; }
-            if (!window.chrome.runtime) { window.chrome.runtime = {}; }
-
-            // ── 2. Neutraliser la bannière Didomi (RGPD) ─────────────────────────────
-            //
-            // Didomi est bundlé dans le JS de BoursoBank et réapplique ses propres styles
-            // en continu. Un simple display:none ponctuel est annulé aussitôt.
-            // Solution : setInterval toutes les 50ms avec setProperty 'important' —
-            // un style inline !important ne peut pas être surchargé par le JS Didomi.
-
-            const _killDidomi = () => {
-                const host = document.querySelector('#didomi-host');
-                if (!host) return;
-
-                // 1. Tenter d'accepter proprement via le Shadow DOM
-                const shadow = host.shadowRoot;
-                if (shadow) {
-                    const selectors = [
-                        '#didomi-notice-agree-button',
-                        '[data-didomi-action="agree"]',
-                        'button[aria-label*="ccepter"]',
-                        'button[aria-label*="ccept"]',
-                    ];
-                    for (const sel of selectors) {
-                        const el = shadow.querySelector(sel);
-                        if (el) { el.click(); }
-                    }
-                    for (const btn of shadow.querySelectorAll('button')) {
-                        if (/tout accepter|accepter|accept all/i.test(btn.textContent || '')) {
-                            btn.click();
+            return page.evaluate(
+                """({ targetDigits }) => {
+                    const normalize = s => (s || '').replace(/\\D/g, '');
+                    for (const card of document.querySelectorAll(
+                        'a.c-info-box__link-wrapper, a[href*="/compte/"], a[href*="/budget/mouvements"]'
+                    )) {
+                        if (normalize(card.textContent).includes(targetDigits)) {
+                            const lbl = card.querySelector('span.c-info-box__account-label');
+                            const guid = lbl ? lbl.getAttribute('data-account-label') : null;
+                            if (guid) return guid;
                         }
                     }
-                }
-
-                // 2. Forcer la disparition de l'overlay (style !important non surchargeable)
-                host.style.setProperty('display', 'none', 'important');
-                host.style.setProperty('pointer-events', 'none', 'important');
-                host.style.setProperty('visibility', 'hidden', 'important');
-                host.style.setProperty('z-index', '-9999', 'important');
-            };
-
-            // Démarrer immédiatement et répéter toutes les 50ms
-            setInterval(_killDidomi, 50);
-        })();
-        """
-
-    def _is_step_up_authentication_required(self, error: str) -> bool:
-        """Détecte les cas de sécurisation/step-up auth visibles dans les logs Playwright."""
-        indicators = (
-            "/securisation",
-            "x-domain-authentification",
-            "referer-domain=clients.boursobank.com",
-        )
-        return any(token in error for token in indicators)
-
-    def _is_on_securisation_page(self) -> bool:
-        """Vérifie si la page Playwright courante est bien la page /securisation."""
-        if not self.scraper:
-            return False
-        page = getattr(self.scraper, "page", None)
-        if page is None:
-            return False
-        try:
-            return "/securisation" in (getattr(page, "url", "") or "")
+                    return null;
+                }""",
+                {"targetDigits": number},
+            ) or None
         except Exception:
-            return False
+            return None
 
-    def _trigger_securisation_code_send(self) -> bool:
-        """
-        Sur la page /securisation, clique "Suivant" pour déclencher l'envoi du code
-        à usage unique (SMS / notification app BoursoBank).
+    # ------------------------------------------------------------------
+    # Transactions via interception réseau + fallback DOM
+    # ------------------------------------------------------------------
 
-        IMPORTANT : sur la page de sécurisation BoursoBank, "Suivant" est un <a> lien
-        (pas un <button>), de classe c-button--primary, avec href vers /securisation/validation.
-        Sans ce clic, l'utilisateur ne reçoit aucun code.
-        Retourne True si le clic / la navigation a été effectué.
-        """
-        if not self.scraper:
-            return False
-        page = getattr(self.scraper, "page", None)
-        if page is None:
-            return False
+    def _fetch_transactions_via_api(
+        self, bourso_account: "BoursoAccount", since: Optional[datetime] = None
+    ) -> List[Dict]:
+        page = getattr(self._scraper, "page", None) if self._scraper else None
+        if not page:
+            logger.warning("BoursoBank: page indisponible")
+            return []
+
+        captured_responses: List[Dict] = []
+        api_re = re.compile(r"(operation|mouvement|movement|transaction|pfm|moneycenter|services/api)", re.IGNORECASE)
+
+        # Hook fetch/XHR dans la page pour capturer les JSON applicatifs
+        # qui peuvent ne pas remonter proprement via le listener Playwright.
         try:
-            current_url = getattr(page, "url", "") or ""
-            if "/securisation" not in current_url:
-                return False
+            page.evaluate(
+                """() => {
+                    if (window.__BOURSO_CAPTURE_INSTALLED__) return;
+                    window.__BOURSO_CAPTURE_INSTALLED__ = true;
+                    window.__BOURSO_CAPTURED_RESPONSES__ = [];
 
-            # Sur /securisation, "Suivant" est un <a> lien (et non un <button>).
-            # Essayer d'abord le lien, puis fallback sur tout élément avec ce texte.
-            link = page.get_by_role("link", name="Suivant")
-            if link.count() > 0:
-                link.first.click()
-                logger.info(
-                    "BoursoBank: lien 'Suivant' cliqué sur la page de sécurisation "
-                    "— code 2FA en cours d'envoi."
-                )
-                time.sleep(1)
-                return True
+                    const shouldTrack = (url) => {
+                        const u = (url || '').toLowerCase();
+                        return (
+                            u.includes('/services/api/')
+                            || u.includes('api.boursobank.com')
+                            || /operation|mouvement|movement|transaction|pfm|moneycenter/.test(u)
+                        );
+                    };
 
-            # Fallback : naviguer directement vers /securisation/validation
-            validation_url = current_url.replace("/securisation?", "/securisation/validation?")
-            if validation_url != current_url and "/securisation/validation" in validation_url:
-                page.goto(validation_url)
-                logger.info(
-                    "BoursoBank: navigation directe vers %s pour déclencher l'envoi du code.",
-                    validation_url,
-                )
-                time.sleep(1)
-                return True
+                    const pushPayload = (url, data) => {
+                        try {
+                            window.__BOURSO_CAPTURED_RESPONSES__.push({ url, data });
+                        } catch (_) {}
+                    };
 
-        except Exception:
-            logger.debug(
-                "Impossible de cliquer sur 'Suivant' (page sécurisation)",
-                exc_info=True,
+                    const originalFetch = window.fetch.bind(window);
+                    window.fetch = async (...args) => {
+                        const res = await originalFetch(...args);
+                        try {
+                            const url = (res && res.url) || (args && args[0] && String(args[0])) || '';
+                            const ct = (res.headers && res.headers.get && res.headers.get('content-type')) || '';
+                            if (shouldTrack(url) && ct.includes('json')) {
+                                const clone = res.clone();
+                                const json = await clone.json();
+                                pushPayload(url, json);
+                            }
+                        } catch (_) {}
+                        return res;
+                    };
+
+                    const open = XMLHttpRequest.prototype.open;
+                    const send = XMLHttpRequest.prototype.send;
+                    XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+                        this.__capture_url__ = url;
+                        return open.call(this, method, url, ...rest);
+                    };
+                    XMLHttpRequest.prototype.send = function(...args) {
+                        this.addEventListener('load', function() {
+                            try {
+                                const url = this.__capture_url__ || this.responseURL || '';
+                                const ct = this.getResponseHeader && this.getResponseHeader('content-type');
+                                if (!shouldTrack(url) || !ct || !ct.includes('json')) return;
+                                if (!this.responseText) return;
+                                const parsed = JSON.parse(this.responseText);
+                                pushPayload(url, parsed);
+                            } catch (_) {}
+                        });
+                        return send.call(this, ...args);
+                    };
+                }"""
             )
-        return False
-
-    def _wait_for_security_validation_completion(self) -> bool:
-        """
-        Attend la fin d'une validation de nouvel appareil (page /securisation).
-        Doit être appelée APRÈS _trigger_securisation_code_send().
-        Retourne True si l'espace comptes devient accessible dans la session courante.
-        """
-        if not self.scraper:
-            return False
-        page = getattr(self.scraper, "page", None)
-        if page is None:
-            return False
-
-        try:
-            deadline = time.time() + max(self.security_wait_seconds, 10)
-            while time.time() < deadline:
-                try:
-                    current_url = getattr(page, "url", "") or ""
-                    if not isinstance(current_url, str):
-                        return False
-                    # Attendre que le navigateur quitte toutes les pages de sécurisation
-                    # (/securisation et /securisation/validation).
-                    if "/securisation" not in current_url:
-                        accounts = self._safe_list_accounts()
-                        if accounts:
-                            return True
-                except Exception:
-                    # La page peut être en cours de transition; on continue de poll.
-                    pass
-                time.sleep(2)
         except Exception:
-            return False
-        return False
+            pass
 
-    def _safe_list_accounts(self) -> List[_Account]:
-        """
-        Liste les comptes via l'API du module puis fallback DOM
-        (le module peut timeout même avec session déjà ouverte).
-        """
-        if not self.scraper:
+        def _on_response(response):
+            try:
+                url = response.url
+                content_type = response.headers.get("content-type", "")
+                if "json" not in content_type:
+                    return
+                if not api_re.search(url):
+                    return
+                if response.status >= 400:
+                    logger.debug("BoursoBank: intercept %s -> HTTP %d (skip)", url, response.status)
+                    return
+                body = response.body()
+                data = json.loads(body)
+                captured_responses.append({"url": url, "data": data})
+                logger.debug("BoursoBank: intercept %s -> OK (%d bytes)", url, len(body))
+            except Exception:
+                pass
+
+        page.on("response", _on_response)
+        tx_timeout = int(getattr(settings, "BOURSOBANK_TX_TIMEOUT_MS", 30000))
+        try:
+            self._navigate_to_account(page, bourso_account, tx_timeout)
+        except Exception as e:
+            logger.warning("BoursoBank: navigation compte echouee: %s", e)
+        finally:
+            try:
+                page.remove_listener("response", _on_response)
+            except Exception:
+                pass
+
+        logger.info("BoursoBank: %d reponse(s) reseau interceptee(s)", len(captured_responses))
+
+        # Fusion avec les captures fetch/XHR côté navigateur
+        try:
+            browser_captured = page.evaluate(
+                """() => {
+                    const out = Array.isArray(window.__BOURSO_CAPTURED_RESPONSES__)
+                        ? window.__BOURSO_CAPTURED_RESPONSES__
+                        : [];
+                    window.__BOURSO_CAPTURED_RESPONSES__ = [];
+                    return out;
+                }"""
+            )
+            if browser_captured:
+                logger.info("BoursoBank: %d reponse(s) capturees via hook fetch/XHR", len(browser_captured))
+                captured_responses.extend(browser_captured)
+        except Exception:
+            pass
+
+        out: List[Dict] = []
+        seen_ids: set = set()
+        for resp in captured_responses:
+            operations = _extract_operations(resp["data"])
+            for op in operations:
+                tx = _parse_operation(op)
+                if not tx:
+                    continue
+                tx_id = (tx.get("raw") or {}).get("transaction_id")
+                if tx_id and tx_id in seen_ids:
+                    continue
+                if tx_id:
+                    seen_ids.add(tx_id)
+                out.append(tx)
+
+        if out:
+            logger.info("BoursoBank: %d transaction(s) via interception reseau", len(out))
+            return out
+
+        state_tx = self._extract_transactions_from_page_state(page)
+        if state_tx:
+            logger.info("BoursoBank: %d transaction(s) via etat JS embarque", len(state_tx))
+            return state_tx
+
+        logger.info("BoursoBank: 0 interception reseau, fallback DOM")
+        return self._scrape_visible_transactions(since=since)
+
+    def _extract_transactions_from_page_state(self, page) -> List[Dict]:
+        """Extrait des operations depuis les objets JS embarques (Next/Redux/etc.)."""
+        try:
+            payload = page.evaluate(
+                """() => {
+                    const roots = [
+                        window.__INITIAL_STATE__,
+                        window.__NEXT_DATA__,
+                        window.__NUXT__,
+                        window.APP_STATE,
+                        window.appState,
+                        window.store && typeof window.store.getState === 'function' ? window.store.getState() : null,
+                    ];
+                    return roots.filter(Boolean);
+                }"""
+            )
+        except Exception:
             return []
 
-        try:
-            accounts = list(self.scraper.listAccounts())
-            return [
-                self._Account(
-                    id=str(acc.id),
-                    name=str(acc.name),
-                    balance=Decimal(str(acc.balance)).quantize(Decimal("1.00")),
-                    link=str(acc.link),
-                )
-                for acc in accounts
+        found: List[Dict] = []
+        seen_obj = set()
+
+        def walk(node):
+            if node is None:
+                return
+            if isinstance(node, dict):
+                marker = id(node)
+                if marker in seen_obj:
+                    return
+                seen_obj.add(marker)
+                ops = _extract_operations(node)
+                for op in ops:
+                    if isinstance(op, dict):
+                        found.append(op)
+                for value in node.values():
+                    walk(value)
+                return
+            if isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(payload)
+        out: List[Dict] = []
+        seen_ids: set = set()
+        for op in found:
+            tx = _parse_operation(op)
+            if not tx:
+                continue
+            tx_id = (tx.get("raw") or {}).get("transaction_id")
+            if tx_id and tx_id in seen_ids:
+                continue
+            if tx_id:
+                seen_ids.add(tx_id)
+            out.append(tx)
+        return out
+
+    def _navigate_to_account(self, page, bourso_account: "BoursoAccount", timeout_ms: int) -> None:
+        """Navigate vers la page de transactions du compte en cliquant dessus."""
+        account_id = getattr(bourso_account, "id", "") or ""
+
+        # On est sur /budget/mouvements (liste des comptes).
+        # Il faut cliquer sur le compte cible pour afficher ses transactions.
+        clicked = False
+        if account_id:
+            selectors = [
+                f'[data-account-label="{account_id}"]',
+                f'a[href*="{account_id}"]',
             ]
-        except Exception:
-            logger.info("Fallback DOM pour la détection des comptes BoursoBank.")
-            return self._accounts_from_page_dom()
+            for sel in selectors:
+                try:
+                    el = page.locator(sel).first
+                    if el.count() > 0:
+                        logger.info("BoursoBank: clic sur compte %s (selecteur: %s)", account_id, sel)
+                        el.click(timeout=timeout_ms)
+                        page.wait_for_load_state("networkidle", timeout=15000)
+                        clicked = True
+                        break
+                except Exception as e:
+                    logger.debug("BoursoBank: clic selecteur %s echoue: %s", sel, e)
 
-    def _accounts_from_page_dom(self) -> List[_Account]:
-        if not self.scraper:
+        if not clicked:
+            account_link = getattr(bourso_account, "link", "") or ""
+            if account_link and account_link != page.url:
+                logger.info("BoursoBank: navigation directe vers %s", account_link)
+                page.goto(account_link, timeout=timeout_ms)
+                page.wait_for_load_state("networkidle", timeout=15000)
+            else:
+                logger.warning("BoursoBank: impossible de naviguer vers le compte %s", account_id)
+
+        logger.info("BoursoBank: page apres navigation: %s", page.url)
+
+    def _scrape_visible_transactions(self, since: Optional[datetime] = None) -> List[Dict]:
+        page = getattr(self._scraper, "page", None) if self._scraper else None
+        if not page:
             return []
-        page = getattr(self.scraper, "page", None)
-        if page is None:
-            return []
+
+        # Arret anticipe: on sync souvent, inutile de remonter tout l'historique.
+        # Des que la plus vieille operation chargee est anterieure a `since` (moins
+        # une marge de securite pour les operations postees en retard), on stoppe.
+        since_cutoff = None
+        if since is not None:
+            since_cutoff = since
+            if timezone.is_naive(since_cutoff):
+                since_cutoff = timezone.make_aware(
+                    since_cutoff, timezone.get_current_timezone()
+                )
+            margin_days = int(getattr(settings, "BOURSOBANK_SINCE_MARGIN_DAYS", 3))
+            since_cutoff = since_cutoff - timedelta(days=margin_days)
+
+        def _oldest_loaded_date():
+            """Date de la plus ancienne operation actuellement chargee (ou None)."""
+            try:
+                raw = page.evaluate(
+                    "() => { const it = document.querySelectorAll('li.list-operation-item');"
+                    " if (!it.length) return '';"
+                    " return it[it.length - 1].getAttribute('data-id') || ''; }"
+                ) or ""
+            except Exception:
+                return None
+            decoded = _decode_dom_data_id(raw)
+            return _parse_french_date(decoded.get("d") or "")
+
+        # Pagination client-side: le bouton "Mouvements precedents" charge plus
+        # d'operations sans changer d'URL.
+        max_clicks = int(getattr(settings, "BOURSOBANK_MAX_PREVIOUS_CLICKS", 160))
+        for idx in range(max_clicks):
+            try:
+                # Deja assez remonte dans le passe ? on arrete sans cliquer plus.
+                if since_cutoff is not None:
+                    oldest = _oldest_loaded_date()
+                    if oldest is not None and oldest < since_cutoff:
+                        logger.info(
+                            "BoursoBank: arret pagination anticipe "
+                            "(plus vieille op=%s < seuil since=%s)",
+                            oldest.date(), since_cutoff.date(),
+                        )
+                        break
+
+                before_count = page.evaluate(
+                    "() => document.querySelectorAll('li.list-operation-item').length"
+                ) or 0
+                next_btn = page.locator("[data-operations-next-pagination-trigger]").first
+                if next_btn.count() == 0 or not next_btn.is_visible():
+                    break
+                logger.info("BoursoBank: clic pagination mouvements precedents (%d/%d)", idx + 1, max_clicks)
+                next_btn.click(timeout=5000)
+                grew = False
+                for _ in range(7):
+                    page.wait_for_timeout(700)
+                    after_count = page.evaluate(
+                        "() => document.querySelectorAll('li.list-operation-item').length"
+                    ) or 0
+                    if after_count > before_count:
+                        logger.info(
+                            "BoursoBank: pagination +%d operation(s) (total=%d)",
+                            after_count - before_count,
+                            after_count,
+                        )
+                        grew = True
+                        break
+                if not grew:
+                    logger.info(
+                        "BoursoBank: pagination sans nouveau resultat (total=%d), arret.",
+                        before_count,
+                    )
+                    break
+            except Exception as e:
+                logger.debug("BoursoBank: pagination stop (%s)", e)
+                break
 
         try:
-            if "/budget/mouvements" not in (page.url or ""):
-                page.goto("https://clients.boursobank.com/budget/mouvements")
-            locator_accounts = page.locator("css=a.c-info-box__link-wrapper")
-            account_elements = locator_accounts.all()
-            recovered: List[BoursoBankConnector._Account] = []
-            for account_el in account_elements:
-                name = (account_el.get_attribute("title") or "").strip()
-                balance_el = account_el.locator("css=span.c-info-box__account-balance")
-                label_el = account_el.locator("css=span.c-info-box__account-label")
-                if balance_el.count() == 0 or label_el.count() == 0:
-                    continue
-                account_id = label_el.get_attribute("data-account-label")
-                if not account_id:
-                    continue
-                href = account_el.get_attribute("href") or ""
-                link = href if href.startswith("http") else f"https://clients.boursobank.com{href}"
-                balance_raw = (balance_el.first.text_content() or "").strip()
-                balance = self._parse_balance_text(balance_raw)
-                recovered.append(self._Account(id=account_id, name=name, balance=balance, link=link))
-            return recovered
-        except Exception:
+            rows = page.evaluate(
+                """() => {
+                    const normalize = (s) => (s || '').replace(/\\s+/g, ' ').trim();
+                    const root = document.querySelector('ul.list.list__movement, ul.list__movement') || document;
+                    const children = Array.from(root.querySelectorAll(':scope > li, li'));
+                    const out = [];
+                    let currentDateHeader = '';
+
+                    for (const el of children) {
+                        if (el.classList.contains('list-operation-date-line')) {
+                            currentDateHeader = normalize(el.textContent);
+                            continue;
+                        }
+                        if (!el.classList.contains('list-operation-item')) {
+                            continue;
+                        }
+                        out.push({
+                            operationId: normalize(el.getAttribute('data-id')),
+                            isAuthorization: String(el.getAttribute('data-is-auth') || '').toLowerCase() === 'true',
+                            dateHeader: currentDateHeader,
+                            dateText: normalize(
+                                (el.querySelector('.list-operation-item__date, [data-operations-date], time, [class*="date"]') || {}).textContent || ''
+                            ),
+                            labelUser: normalize((el.querySelector('.list__movement--label-user') || {}).textContent || ''),
+                            labelInitial: normalize((el.querySelector('.list__movement--label-initial') || {}).textContent || ''),
+                            category: normalize((el.querySelector('.list-operation-item__category') || {}).textContent || ''),
+                            amountText: normalize((el.querySelector('.list-operation-item__amount, [class*="amount"]') || {}).textContent || ''),
+                        });
+                    }
+                    return out;
+                }"""
+            )
+        except Exception as e:
+            logger.warning("BoursoBank: fallback DOM echoue: %s", e)
+            msg = str(e).lower()
+            if "target crashed" in msg or "page crashed" in msg:
+                raise ConnectionTimeoutError("BoursoBank: page cible crash pendant l'extraction transactions")
             return []
 
-    def _parse_balance_text(self, value: str) -> Decimal:
-        cleaned = (
-            value.replace("\xa0", "")
-            .replace(" ", "")
-            .replace("€", "")
-            .replace(",", ".")
-            .replace("+", "")
-            .strip()
+        out: List[Dict] = []
+        seen: set = set()
+        for row in rows or []:
+            amount = _parse_amount_text(row.get("amountText", ""))
+            decoded = _decode_dom_data_id(row.get("operationId", ""))
+            posted_at = _parse_french_date(decoded.get("d") or row.get("dateText", "") or row.get("dateHeader", ""))
+            if amount is None or posted_at is None:
+                continue
+            desc = (
+                (row.get("labelUser") or "").strip()
+                or (row.get("labelInitial") or "").strip()
+                or "Transaction BoursoBank"
+            )
+            op_id = (row.get("operationId") or "").strip() or None
+            tx_id = decoded.get("id") or op_id
+            dedupe_key = tx_id or f"{posted_at.isoformat()}::{amount}::{desc}"
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+            out.append({
+                "posted_at": posted_at,
+                "amount": amount,
+                "description": desc,
+                "raw": {
+                    "source": "boursorama",
+                    "transaction_id": tx_id,
+                    "operation_id": op_id,
+                    "category": (row.get("category") or "").strip(),
+                    "is_authorization": bool(row.get("isAuthorization")),
+                    "dom_date_header": (row.get("dateHeader") or "").strip(),
+                    "dom_data_id_decoded": decoded or None,
+                    "from_dom_fallback": True,
+                },
+            })
+        logger.info("BoursoBank: %d transaction(s) via fallback DOM", len(out))
+        return out
+
+
+# ======================================================================
+# Fonctions utilitaires (hors classe)
+# ======================================================================
+
+
+def _patch_scraper_login(scraper):
+    """Monkey-patch BoursoScraper.login to handle 'Se connecter' button rename."""
+    import types
+
+    original_login = scraper.login
+
+    def patched_login(self):
+        url = f"{self.apiUrl}/budget/mouvements"
+        self.logger.debug(f"Load accounts page : {url}")
+        self.page.goto(url)
+
+        self.locatorCookies = self.page.get_by_role("button", name="Continuer sans accepter")
+        self.locatorId = self.page.get_by_role("textbox", name="Saisissez votre identifiant")
+        self.locatorMemorize = self.page.get_by_text("Mémoriser mon identifiant")
+        self.locatorButtonNext = self.page.get_by_role("button", name="Suivant")
+        self.locatorButtonConnect = self.page.get_by_role("button", name="Je me connecte").or_(
+            self.page.get_by_role("button", name="Se connecter")
         )
+        self.locatorButtonReconnect = self.page.get_by_role("link", name="Je me reconnecte")
+        self.locatorHeaderAccountsPage = self.page.get_by_text("Mes comptes bancaires", exact=True)
+        self.locatorWrongPass = self.page.get_by_text("Identifiant ou mot de passe")
+
+        expectedLocators = [
+            self.locatorCookies,
+            self.locatorId,
+            self.locatorButtonConnect,
+            self.locatorHeaderAccountsPage,
+            self.locatorButtonReconnect,
+        ]
+
+        while True:
+            multiLocator = self.orLocator(expectedLocators)
+            multiLocator.wait_for(state="visible")
+            if self.locatorCookies in expectedLocators and len(self.locatorCookies.all()) > 0:
+                self.logger.debug("Found cookie consent, click no")
+                self.locatorCookies.click()
+                expectedLocators.remove(self.locatorCookies)
+            elif self.locatorHeaderAccountsPage in expectedLocators and len(self.locatorHeaderAccountsPage.all()) > 0:
+                self.logger.info("Already connected !")
+                return True
+            elif self.locatorButtonReconnect in expectedLocators and len(self.locatorButtonReconnect.all()) > 0:
+                self.logger.info("Click reconnect button")
+                self.locatorButtonReconnect.click()
+                expectedLocators.remove(self.locatorButtonReconnect)
+            elif self.locatorId in expectedLocators and len(self.locatorId.all()) > 0:
+                self.logger.debug("Found username input, enter login")
+                self.locatorId.fill(self.username)
+                self.locatorMemorize.click()
+                self.logger.debug("Clic submit login id")
+                self.locatorButtonNext.click()
+                expectedLocators.remove(self.locatorId)
+            elif self.locatorButtonConnect in expectedLocators and len(self.locatorButtonConnect.all()) > 0:
+                self.logger.debug("Found Button connect")
+                self.logger.debug("Enter password")
+                self.decryptPassword()
+                import time as _time
+                _time.sleep(0.3)
+                self.logger.debug("Clic Connect Button")
+                self.locatorButtonConnect.click()
+                break
+
+        expectedLocators = [self.locatorHeaderAccountsPage, self.locatorWrongPass]
+        multiLocator = self.orLocator(expectedLocators)
+        multiLocator.wait_for(state="visible")
+        if len(self.locatorHeaderAccountsPage.all()) > 0:
+            self.logger.info("Login successfull!")
+            self.logger.debug("Saving context")
+            self.context.storage_state(path=self.contextFile)
+            return True
+        elif len(self.locatorWrongPass.all()) > 0:
+            self.logger.error("Wrong password!")
+        else:
+            self.logger.error("Unexpected result, login failed.")
+        return False
+
+    scraper.login = types.MethodType(patched_login, scraper)
+
+
+def _normalize_digits(value: str) -> str:
+    return "".join(ch for ch in (value or "") if ch.isdigit())
+
+
+def _extract_operations(payload) -> List[Dict]:
+    """
+    Extraction robuste d'operations depuis payload JSON (souvent imbriqué).
+    """
+    if payload is None:
+        return []
+
+    out: List[Dict] = []
+    seen_nodes: set = set()
+    key_hint = re.compile(r"(operation|mouvement|movement|transaction)", re.IGNORECASE)
+
+    def looks_like_operation(item) -> bool:
+        if not isinstance(item, dict):
+            return False
+        keys = set(item.keys())
+        # Heuristique stable pour les objets operation Bourso
+        if {"id", "amount"} <= keys:
+            return True
+        if "amount" in keys and ("date" in keys or "dates" in keys):
+            return True
+        return False
+
+    def walk(node):
+        marker = id(node)
+        if marker in seen_nodes:
+            return
+        seen_nodes.add(marker)
+
+        if isinstance(node, dict):
+            if looks_like_operation(node):
+                out.append(node)
+            for k, v in node.items():
+                if isinstance(v, list):
+                    if key_hint.search(str(k)):
+                        out.extend([x for x in v if looks_like_operation(x)])
+                    for item in v:
+                        walk(item)
+                elif isinstance(v, dict):
+                    walk(v)
+            return
+
+        if isinstance(node, list):
+            if node and all(isinstance(x, dict) for x in node):
+                if any(looks_like_operation(x) for x in node):
+                    out.extend([x for x in node if looks_like_operation(x)])
+            for item in node:
+                walk(item)
+
+    walk(payload)
+
+    # Dedupe conservatif par id JSON si disponible, sinon par identité objet
+    dedup: List[Dict] = []
+    seen_ids: set = set()
+    for op in out:
+        op_id = op.get("id")
+        if op_id:
+            if op_id in seen_ids:
+                continue
+            seen_ids.add(op_id)
+        dedup.append(op)
+    return dedup
+
+
+def _parse_amount_text(text: str) -> Optional[Decimal]:
+    if not text:
+        return None
+    cleaned = (
+        text.replace("\u202f", " ")
+        .replace("\xa0", " ")
+        .replace("−", "-")
+        .replace("–", "-")
+        .replace("—", "-")
+    )
+    # Le signe peut etre separe du montant par un espace: "- 16,76 €"
+    m = re.search(r"([+-]?)\s*(\d[\d\s]*[.,]\d{2})", cleaned)
+    if not m:
+        return None
+    sign = "-" if m.group(1) == "-" else ""
+    raw = f"{sign}{m.group(2).replace(' ', '').replace(',', '.')}"
+    try:
+        return Decimal(raw)
+    except Exception:
+        return None
+
+
+def _parse_french_date(text: str) -> Optional[datetime]:
+    if not text:
+        return None
+    txt = text.strip().lower()
+    now = timezone.now()
+    d = None
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", txt):
         try:
-            return Decimal(cleaned).quantize(Decimal("1.00"))
+            d = datetime.strptime(txt, "%Y-%m-%d").date()
         except Exception:
-            return Decimal("0.00")
+            d = None
+    if "aujourd" in txt:
+        d = now.date()
+    elif "hier" in txt:
+        d = (now - timedelta(days=1)).date()
+    else:
+        for fmt in ("%d/%m/%Y", "%d/%m/%y"):
+            try:
+                d = datetime.strptime(txt, fmt).date()
+                break
+            except Exception:
+                pass
+        if d is None:
+            month_map = {
+                "janv": "01", "fevr": "02", "fév": "02", "mars": "03",
+                "avr": "04", "mai": "05", "juin": "06", "juil": "07",
+                "aout": "08", "août": "08", "sept": "09", "oct": "10",
+                "nov": "11", "dec": "12", "déc": "12",
+            }
+            cleaned = (
+                txt.replace(".", " ")
+                .replace(",", " ")
+                .replace("é", "e")
+                .replace("è", "e")
+                .replace("ê", "e")
+                .replace("û", "u")
+                .replace("ù", "u")
+                .replace("ô", "o")
+                .replace("î", "i")
+                .replace("ï", "i")
+                .replace("à", "a")
+                .replace("â", "a")
+            )
+            parts = [p for p in cleaned.split() if p]
+            while parts and not parts[0].isdigit():
+                parts.pop(0)
+            if len(parts) >= 3 and parts[0].isdigit() and parts[2].isdigit():
+                mm = None
+                for k, v in month_map.items():
+                    if parts[1].startswith(k):
+                        mm = v
+                        break
+                if mm:
+                    try:
+                        d = datetime.strptime(f"{parts[0]}/{mm}/{parts[2]}", "%d/%m/%Y").date()
+                    except Exception:
+                        pass
+    if d is None:
+        return None
+    return timezone.make_aware(datetime.combine(d, datetime.min.time()), timezone.get_current_timezone())
 
-    def _write_config_yaml(self, user_data_path: Path, username: str, password: str) -> None:
-        """
-        Génère un config.yaml dans le dossier data (workflow recommandé par le module).
-        Par défaut, le mot de passe n'est pas persisté.
-        """
-        config = {
-            "username": username,
-            "headless": self.headless,
-            "timeoutMs": self.timeout_ms,
-            "saveTrace": self.save_trace,
-            "password": password,
-        }
 
-        config_path = user_data_path / "config.yaml"
-        config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+def _decode_dom_data_id(data_id: str) -> Dict:
+    """
+    Décode le data-id BoursoBank (base64 JSON) quand c'est le format utilisé.
+    Retourne {} si le format ne correspond pas.
+    """
+    raw = (data_id or "").strip()
+    if not raw:
+        return {}
+    try:
+        padded = raw + "=" * (-len(raw) % 4)
+        decoded = base64.b64decode(padded.encode("utf-8")).decode("utf-8", errors="ignore")
+        obj = json.loads(decoded)
+        return obj if isinstance(obj, dict) else {}
+    except Exception:
+        return {}
+
+
+def _parse_operation(op: Dict) -> Optional[Dict]:
+    if not op:
+        return None
+    op_id = op.get("id")
+    amount = op.get("amount")
+    if op_id is None or amount is None:
+        return None
+
+    labels = op.get("labels") or []
+    description = (
+        next((l.get("body") for l in labels if l.get("type") == "operation_label" and l.get("body")), None)
+        or next((l.get("body") for l in labels if l.get("body")), None)
+        or op.get("headerUpperText")
+        or "Transaction BoursoBank"
+    )
+
+    posted_date = None
+    for d in op.get("dates", []):
+        if d.get("type") in {"operation_date", "value_date", "debit_date"} and d.get("date"):
+            posted_date = d["date"]
+            break
+    if not posted_date:
+        return None
+
+    posted_at = timezone.make_aware(
+        datetime.strptime(posted_date, "%Y-%m-%d"),
+        timezone.get_current_timezone(),
+    )
+    category = op.get("category") or {}
+    status = (op.get("status") or {}).get("id")
+    is_pending = False
+    if isinstance(status, str) and status.lower() in {"pending", "authorization", "authorisation", "coming"}:
+        is_pending = True
+    if isinstance(labels, list):
+        for l in labels:
+            body = (l.get("body") or "").lower()
+            if "autorisation paiement en cours" in body or "pending" in body:
+                is_pending = True
+                break
+    return {
+        "posted_at": posted_at,
+        "amount": Decimal(str(amount)),
+        "description": description,
+        "raw": {
+            "source": "boursorama",
+            "transaction_id": op_id,
+            "operation_id": op_id,
+            "account_id": op.get("accountKey"),
+            "status": status,
+            "boursobank_category_label": category.get("label"),
+            "boursobank_category_parent_label": category.get("parentLabel"),
+            "is_pending": is_pending,
+        },
+    }
+
+
+def _is_pending_transaction(tx: Dict) -> bool:
+    raw = tx.get("raw") or {}
+    desc = (tx.get("description") or "").lower()
+    cat = (raw.get("category") or raw.get("boursobank_category_label") or "").lower()
+    status = (raw.get("status") or "").lower() if isinstance(raw.get("status"), str) else ""
+
+    if raw.get("is_authorization") is True or raw.get("is_pending") is True:
+        return True
+    if status in {"pending", "authorization", "authorisation", "coming"}:
+        return True
+    if "autorisation paiement en cours" in desc or "autorisation paiement en cours" in cat:
+        return True
+    if " pending " in f" {desc} ":
+        return True
+    return False

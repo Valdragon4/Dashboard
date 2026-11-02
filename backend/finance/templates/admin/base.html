@@ -1,0 +1,512 @@
+{% load i18n static %}<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}Administration | Finance{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      if (localStorage.getItem('theme') === 'dark') {
+        document.documentElement.classList.add('dark');
+      }
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            colors: {
+              primary: '#6366f1',
+              'primary-dark': '#4f46e5',
+              'primary-light': '#818cf8',
+            }
+          }
+        }
+      }
+    </script>
+    {% block extrahead %}{% endblock %}
+    {% block extrastyle %}{% endblock %}
+    <style>
+      /* --- Habillage Tailwind des gabarits natifs de Django admin --- */
+      #admin-card a { color: #6366f1; text-decoration: none; }
+      #admin-card a:hover { color: #4f46e5; text-decoration: underline; }
+      .dark #admin-card a { color: #818cf8; }
+      .dark #admin-card a:hover { color: #a5b4fc; }
+
+      #admin-card h1, #admin-card h2, #admin-card h3 {
+        color: inherit; font-weight: 700; margin: 0 0 .75rem 0;
+      }
+      #admin-card h1 { font-size: 1.5rem; }
+      #admin-card h2 { font-size: 1.125rem; }
+
+      .admin-breadcrumbs {
+        font-size: .8rem; color: #6b7280; margin-bottom: 1rem;
+      }
+      .dark .admin-breadcrumbs { color: #9ca3af; }
+      .admin-breadcrumbs a { color: #6366f1; }
+      .dark .admin-breadcrumbs a { color: #818cf8; }
+
+      /* Messages */
+      #admin-card ul.messagelist { list-style: none; margin: 0 0 1.25rem 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; }
+      #admin-card ul.messagelist li {
+        padding: .75rem 1rem; border-radius: .5rem; border-left-width: 4px; border-left-style: solid;
+        background: #eff6ff; border-color: #60a5fa; color: #1d4ed8; font-size: .875rem;
+      }
+      #admin-card ul.messagelist li.success { background: #f0fdf4; border-color: #4ade80; color: #15803d; }
+      #admin-card ul.messagelist li.warning { background: #fffbeb; border-color: #facc15; color: #a16207; }
+      #admin-card ul.messagelist li.error { background: #fef2f2; border-color: #f87171; color: #b91c1c; }
+      .dark #admin-card ul.messagelist li { background: rgba(96,165,250,.1); color: #93c5fd; }
+      .dark #admin-card ul.messagelist li.success { background: rgba(74,222,128,.1); color: #86efac; }
+      .dark #admin-card ul.messagelist li.warning { background: rgba(250,204,21,.1); color: #fde047; }
+      .dark #admin-card ul.messagelist li.error { background: rgba(248,113,113,.1); color: #fca5a5; }
+      ul.errorlist { list-style: none; margin: .25rem 0; padding: 0; color: #dc2626; font-size: .8rem; }
+      .errornote { padding: .75rem 1rem; border-radius: .5rem; background: #fef2f2; color: #b91c1c; border-left: 4px solid #f87171; margin-bottom: 1rem; font-size: .875rem; }
+      .dark .errornote { background: rgba(248,113,113,.1); color: #fca5a5; }
+
+      /* Layout interne admin (nav sidebar des modèles + contenu) */
+      .admin-layout { display: flex; gap: 1.5rem; align-items: flex-start; }
+      #nav-sidebar { width: 14rem; flex-shrink: 0; }
+      #nav-sidebar input#nav-filter {
+        width: 100%; padding: .5rem .75rem; margin-bottom: .75rem; font-size: .8rem;
+        border: 1px solid #e5e7eb; border-radius: .5rem; background: #f9fafb; color: inherit;
+      }
+      .dark #nav-sidebar input#nav-filter { background: #374151; border-color: #4b5563; }
+      #nav-sidebar .module { margin-bottom: 1rem; }
+      #nav-sidebar caption, #nav-sidebar .module > * > caption {
+        font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em;
+        color: #9ca3af; padding: .25rem .5rem;
+      }
+      #nav-sidebar table { width: 100%; border-collapse: collapse; }
+      #nav-sidebar th { text-align: left; font-weight: 600; padding: .375rem .5rem; font-size: .8rem; }
+      #nav-sidebar td { padding: 0; }
+      #nav-sidebar a { display: block; padding: .375rem .5rem; border-radius: .375rem; font-size: .8rem; color: #374151; }
+      .dark #nav-sidebar a { color: #d1d5db; }
+      #nav-sidebar a:hover { background: #f3f4f6; text-decoration: none; }
+      .dark #nav-sidebar a:hover { background: #374151; }
+      #nav-sidebar .current-app .section, #nav-sidebar .current-model { font-weight: 700; color: #6366f1 !important; }
+      .toggle-nav-sidebar { display: none; }
+
+      .admin-content { flex: 1; min-width: 0; }
+
+      /* Listes (changelist) */
+      #changelist .actions {
+        display: flex; align-items: center; gap: .5rem; padding: .75rem 1rem; margin-bottom: .75rem;
+        background: #f9fafb; border: 1px solid #e5e7eb; border-radius: .5rem; font-size: .8rem;
+      }
+      .dark #changelist .actions { background: #374151; border-color: #4b5563; }
+      #changelist table, .results table, table.results { width: 100%; border-collapse: collapse; font-size: .825rem; overflow: hidden; }
+      .results { border: 1px solid #e5e7eb; border-radius: .75rem; overflow: hidden; }
+      .dark .results { border-color: #4b5563; }
+      .results table thead th, table.results thead th, .results > table > thead > tr > th {
+        background: #f9fafb; color: #6b7280; font-weight: 600; text-transform: uppercase; letter-spacing: .03em;
+        font-size: .7rem; text-align: left; padding: .625rem .875rem; border-bottom: 1px solid #e5e7eb;
+      }
+      .dark .results table thead th { background: #374151; color: #9ca3af; border-color: #4b5563; }
+      .results table thead th a, .results table thead th a:link, .results table thead th a:visited { color: inherit; }
+      .results table tbody td, .results table tbody th {
+        padding: .625rem .875rem; border-bottom: 1px solid #f3f4f6; color: #374151;
+      }
+      .dark .results table tbody td, .dark .results table tbody th { border-color: #374151; color: #d1d5db; }
+      .results table tbody tr:last-child td { border-bottom: none; }
+      .results table tbody tr:hover { background: #f9fafb; }
+      .dark .results table tbody tr:hover { background: #1f2937; }
+      .results table tbody th a { font-weight: 600; }
+
+      .paginator {
+        display: flex; align-items: center; gap: .5rem; padding: 1rem .25rem 0; font-size: .8rem; color: #6b7280;
+      }
+      .dark .paginator { color: #9ca3af; }
+      .paginator a {
+        padding: .375rem .75rem; border-radius: .5rem; border: 1px solid #e5e7eb; color: #374151;
+      }
+      .dark .paginator a { border-color: #4b5563; color: #d1d5db; }
+      .paginator a:hover { background: #f3f4f6; text-decoration: none; }
+      .dark .paginator a:hover { background: #374151; }
+      .paginator .this-page {
+        padding: .375rem .75rem; border-radius: .5rem; background: #6366f1; color: #fff; font-weight: 600;
+      }
+
+      /* Filtres de la changelist */
+      #changelist-filter {
+        width: 15rem; flex-shrink: 0; background: #f9fafb; border: 1px solid #e5e7eb;
+        border-radius: .75rem; padding: 1rem; margin-left: 1.25rem; font-size: .8rem;
+      }
+      .dark #changelist-filter { background: #374151; border-color: #4b5563; }
+      #changelist-filter h2, #changelist-filter h3 { font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; color: #9ca3af; margin: 1rem 0 .5rem; }
+      #changelist-filter h2:first-child, #changelist-filter h3:first-child { margin-top: 0; }
+      #changelist-filter ul { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: .125rem; }
+      #changelist-filter ul li a { display: block; padding: .25rem .5rem; border-radius: .375rem; color: #374151; }
+      .dark #changelist-filter ul li a { color: #d1d5db; }
+      #changelist-filter ul li a:hover { background: #f3f4f6; text-decoration: none; }
+      .dark #changelist-filter ul li a:hover { background: #4b5563; }
+      #changelist-filter ul li.selected a { background: #6366f1; color: #fff; font-weight: 600; }
+      #changelist .results-wrap { display: flex; }
+      #toolbar { margin-bottom: .75rem; }
+      #toolbar form input[type="text"] {
+        padding: .5rem .75rem; border: 1px solid #e5e7eb; border-radius: .5rem .375rem .375rem .5rem;
+        font-size: .8rem; background: #f9fafb; color: inherit;
+      }
+      .dark #toolbar form input[type="text"] { background: #374151; border-color: #4b5563; }
+      #toolbar form input[type="submit"] {
+        padding: .5rem .75rem; border-radius: .375rem .5rem .5rem .375rem; border: 1px solid #6366f1;
+        background: #6366f1; color: #fff; font-size: .8rem; cursor: pointer;
+      }
+
+      /* Boutons / liens d'action */
+      .object-tools { margin-bottom: 1rem; }
+      .object-tools a, a.button, input[type="submit"].button, button.button,
+      .submit-row input, .submit-row a, .submit-row button {
+        display: inline-flex; align-items: center; gap: .375rem; padding: .5rem 1rem;
+        border-radius: .5rem; font-size: .8rem; font-weight: 600; cursor: pointer;
+        border: 1px solid transparent; text-decoration: none;
+      }
+      .object-tools a, .submit-row input[type="submit"].default, .submit-row .default {
+        background: #6366f1; color: #fff !important;
+      }
+      .object-tools a:hover, .submit-row input[type="submit"].default:hover { background: #4f46e5; }
+      .submit-row input[type="submit"]:not(.default), .submit-row button:not(.default) {
+        background: #fff; color: #374151 !important; border-color: #e5e7eb;
+      }
+      .dark .submit-row input[type="submit"]:not(.default), .dark .submit-row button:not(.default) {
+        background: #374151; color: #d1d5db !important; border-color: #4b5563;
+      }
+      .submit-row input[type="submit"]:not(.default):hover { background: #f3f4f6; }
+      .deletelink, a.deletelink {
+        background: #fff; color: #dc2626 !important; border: 1px solid #fecaca;
+      }
+      .dark .deletelink, .dark a.deletelink { background: #374151; border-color: #7f1d1d; }
+      .deletelink:hover { background: #fef2f2; }
+      .addlink { color: #6366f1 !important; }
+
+      .submit-row {
+        display: flex; gap: .5rem; align-items: center; margin-top: 1.5rem; padding-top: 1.25rem;
+        border-top: 1px solid #e5e7eb;
+      }
+      .dark .submit-row { border-color: #4b5563; }
+
+      /* Formulaires */
+      fieldset { border: none; margin: 0 0 1.5rem 0; padding: 0; }
+      fieldset h2, fieldset > .description { font-size: .8rem; color: #6b7280; margin-bottom: .5rem; }
+      .form-row { padding: .625rem 0; border-bottom: 1px solid #f3f4f6; }
+      .dark .form-row { border-color: #374151; }
+      .form-row:last-child { border-bottom: none; }
+      .form-row label, label {
+        display: block; font-size: .8rem; font-weight: 600; color: #374151; margin-bottom: .25rem;
+      }
+      .dark .form-row label, .dark label { color: #d1d5db; }
+      .form-row .help, p.help, div.help { font-size: .75rem; color: #9ca3af; margin-top: .25rem; }
+      input[type="text"], input[type="password"], input[type="email"], input[type="url"],
+      input[type="number"], input[type="datetime-local"], input[type="date"], input[type="time"],
+      textarea, select {
+        width: 100%; max-width: 32rem; padding: .5rem .75rem; font-size: .85rem;
+        border: 1px solid #e5e7eb; border-radius: .5rem; background: #fff; color: #111827;
+      }
+      .dark input[type="text"], .dark input[type="password"], .dark input[type="email"], .dark input[type="url"],
+      .dark input[type="number"], .dark input[type="datetime-local"], .dark input[type="date"], .dark input[type="time"],
+      .dark textarea, .dark select {
+        background: #374151; border-color: #4b5563; color: #f3f4f6;
+      }
+      input:focus, textarea:focus, select:focus {
+        outline: none; border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.15);
+      }
+      .vCheckboxLabel, .checkbox-row label { display: inline; font-weight: 400; }
+      .related-widget-wrapper { display: inline-flex; align-items: center; gap: .25rem; }
+
+      table.calendar { width: auto; }
+      .calendar caption { font-weight: 700; padding-bottom: .5rem; }
+      .calendar td, .calendar th { padding: .375rem .5rem; text-align: center; font-size: .8rem; }
+
+      /* Inlines (TabularInline) */
+      .inline-group { margin-top: 1rem; margin-bottom: 1.5rem; }
+      .inline-group h2, .inline-related h3 {
+        font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+        color: #6b7280; padding: .5rem 0;
+      }
+      .tabular.inline-related table { border: 1px solid #e5e7eb; border-radius: .5rem; overflow: hidden; }
+      .dark .tabular.inline-related table { border-color: #4b5563; }
+      .tabular.inline-related table th, .tabular.inline-related table td { padding: .5rem .625rem; font-size: .8rem; border-bottom: 1px solid #f3f4f6; }
+      .dark .tabular.inline-related table th, .dark .tabular.inline-related table td { border-color: #374151; }
+      .tabular.inline-related table thead th { background: #f9fafb; font-weight: 600; color: #6b7280; }
+      .dark .tabular.inline-related table thead th { background: #374151; color: #9ca3af; }
+      .tabular.inline-related td.original, .tabular.inline-related th.original {
+        width: 0; max-width: 0; padding: 0; border: none; overflow: hidden;
+      }
+      .tabular.inline-related td.original p { display: none; }
+
+      /* Index / app_list (page d'accueil admin) */
+      .app-list, .module { margin-bottom: 1.5rem; }
+      .module table, .app-list table { width: 100%; border: 1px solid #e5e7eb; border-radius: .75rem; overflow: hidden; border-collapse: collapse; }
+      .dark .module table, .dark .app-list table { border-color: #4b5563; }
+      .module caption, .app-list caption { background: #f9fafb; padding: .625rem .875rem; font-weight: 700; font-size: .85rem; }
+      .dark .module caption, .dark .app-list caption { background: #374151; }
+      .module table th, .module table td, .app-list table th, .app-list table td {
+        padding: .5rem .875rem; border-bottom: 1px solid #f3f4f6; font-size: .825rem;
+      }
+      .dark .module table th, .dark .module table td, .dark .app-list table th, .dark .app-list table td { border-color: #374151; }
+      .model-list .addlink, .model-list .changelink, .model-list .viewlink {
+        display: inline-block; margin-left: .5rem; font-size: .75rem;
+        padding: .25rem .625rem; border-radius: .375rem; background: #eef2ff; color: #4f46e5 !important;
+      }
+      .dark .model-list .addlink, .dark .model-list .changelink, .dark .model-list .viewlink { background: rgba(99,102,241,.15); color: #a5b4fc !important; }
+
+      /* Petit en-tête (titre + outils utilisateur) */
+      .admin-topbar { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+      .admin-userlinks { display: flex; gap: .75rem; font-size: .8rem; color: #6b7280; }
+      .dark .admin-userlinks { color: #9ca3af; }
+      .admin-userlinks form { display: inline; }
+      .admin-userlinks button {
+        font: inherit; background: none; border: none; padding: 0; color: #6366f1; cursor: pointer;
+      }
+      .dark .admin-userlinks button { color: #818cf8; }
+
+      .clear { clear: both; }
+      .help-tooltip { display: none; }
+    </style>
+  </head>
+  <body class="bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 min-h-screen {% block bodyclass %}{% endblock %}">
+    <div class="flex min-h-screen">
+      <!-- Sidebar -->
+      <aside class="hidden lg:flex lg:flex-shrink-0 lg:fixed lg:inset-y-0 lg:left-0">
+        <div class="flex flex-col w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 h-full">
+          <div class="flex items-center h-16 px-6 border-b border-gray-200 dark:border-gray-700">
+            <a href="/" class="flex items-center space-x-2">
+              <div class="w-8 h-8 bg-gradient-to-br from-primary to-primary-dark rounded-lg flex items-center justify-center">
+                <span class="text-white font-bold text-lg">$</span>
+              </div>
+              <span class="text-xl font-bold text-gray-900 dark:text-white">Finance</span>
+            </a>
+          </div>
+          <nav class="flex-1 px-4 py-6 space-y-1">
+            <a href="/" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"></path>
+              </svg>
+              Dashboard
+            </a>
+            <a href="/transactions/" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"></path>
+              </svg>
+              Transactions
+            </a>
+            <a href="/accounts/" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
+              </svg>
+              Comptes
+            </a>
+            <a href="/bank-connections/" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path>
+              </svg>
+              Connexions Bancaires
+            </a>
+            <a href="/settings/" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+              </svg>
+              Paramètres
+            </a>
+            {% if user.is_superuser %}
+            <div class="pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1">
+              <p class="px-4 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Administration</p>
+              <a href="{% url 'user_list' %}" class="flex items-center px-4 py-2.5 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                </svg>
+                Utilisateurs
+              </a>
+              <a href="{% url 'invitation_list' %}" class="flex items-center px-4 py-2.5 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"></path>
+                </svg>
+                Invitations
+              </a>
+              <a href="{% url 'admin:index' %}" class="flex items-center px-4 py-2.5 text-sm font-medium rounded-lg bg-primary text-white transition-colors">
+                <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                </svg>
+                Panneau admin Django
+              </a>
+            </div>
+            {% endif %}
+          </nav>
+          <div class="px-4 py-4 border-t border-gray-200 dark:border-gray-700 space-y-3">
+            <button onclick="toggleDarkMode()" class="w-full flex items-center px-3 py-2 text-sm font-medium rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              <svg id="darkModeIcon" class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
+              </svg>
+              <span id="darkModeLabel">Mode sombre</span>
+            </button>
+            <div class="flex items-center space-x-3">
+              <div class="w-9 h-9 bg-gradient-to-br from-primary to-primary-dark rounded-full flex items-center justify-center flex-shrink-0">
+                <span class="text-white font-semibold text-sm">{{ user.username|first|upper }}</span>
+              </div>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ user.username }}</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ user.email }}</p>
+              </div>
+              <a href="/" title="Retour à l'application"
+                 class="p-1.5 rounded-lg text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex-shrink-0">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                </svg>
+              </a>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Mobile menu button -->
+      <div class="lg:hidden fixed top-0 left-0 right-0 z-50 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 py-3 flex items-center justify-between">
+        <a href="/" class="flex items-center space-x-2">
+          <div class="w-8 h-8 bg-gradient-to-br from-primary to-primary-dark rounded-lg flex items-center justify-center">
+            <span class="text-white font-bold text-lg">$</span>
+          </div>
+          <span class="text-xl font-bold text-gray-900 dark:text-white">Finance</span>
+        </a>
+        <button id="mobile-menu-button" class="p-2 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"></path>
+          </svg>
+        </button>
+      </div>
+
+      <!-- Mobile sidebar -->
+      <div id="mobile-sidebar" class="lg:hidden fixed inset-0 z-40 hidden">
+        <div class="fixed inset-0 bg-gray-600 dark:bg-gray-900 bg-opacity-75 dark:bg-opacity-80" onclick="document.getElementById('mobile-sidebar').classList.add('hidden')"></div>
+        <div class="fixed inset-y-0 left-0 flex flex-col w-64 bg-white dark:bg-gray-800">
+          <div class="flex items-center h-16 px-6 border-b border-gray-200 dark:border-gray-700">
+            <a href="/" class="flex items-center space-x-2">
+              <div class="w-8 h-8 bg-gradient-to-br from-primary to-primary-dark rounded-lg flex items-center justify-center">
+                <span class="text-white font-bold text-lg">$</span>
+              </div>
+              <span class="text-xl font-bold text-gray-900 dark:text-white">Finance</span>
+            </a>
+          </div>
+          <nav class="flex-1 px-4 py-6 space-y-1 overflow-y-auto">
+            <a href="/" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              Dashboard
+            </a>
+            <a href="/transactions/" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              Transactions
+            </a>
+            <a href="/accounts/" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              Comptes
+            </a>
+            <a href="/bank-connections/" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              Connexions Bancaires
+            </a>
+            <a href="/settings/" class="flex items-center px-4 py-3 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+              Paramètres
+            </a>
+            {% if user.is_superuser %}
+            <div class="pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1">
+              <a href="{% url 'user_list' %}" class="flex items-center px-4 py-2.5 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                Utilisateurs
+              </a>
+              <a href="{% url 'invitation_list' %}" class="flex items-center px-4 py-2.5 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                Invitations
+              </a>
+              <a href="{% url 'admin:index' %}" class="flex items-center px-4 py-2.5 text-sm font-medium rounded-lg bg-primary text-white transition-colors">
+                Panneau admin Django
+              </a>
+            </div>
+            {% endif %}
+          </nav>
+        </div>
+      </div>
+
+      <!-- Main content -->
+      <div class="flex-1 flex flex-col overflow-hidden lg:ml-64">
+        <main class="flex-1 overflow-y-auto">
+          <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8 pt-20 lg:pt-6">
+
+            <div class="admin-topbar">
+              {% block nav-breadcrumbs %}
+                <nav aria-label="{% translate 'Breadcrumbs' %}" class="admin-breadcrumbs">
+                  {% block breadcrumbs %}
+                    <a href="{% url 'admin:index' %}">{% translate 'Home' %}</a>
+                    {% if title %} &rsaquo; {{ title }}{% endif %}
+                  {% endblock %}
+                </nav>
+              {% endblock %}
+              {% block usertools %}
+              {% if has_permission %}
+                <div class="admin-userlinks">
+                  {% if user.has_usable_password %}
+                    <a href="{% url 'admin:password_change' %}">{% translate 'Change password' %}</a>
+                  {% endif %}
+                  <form id="logout-form" method="post" action="{% url 'admin:logout' %}">
+                    {% csrf_token %}
+                    <button type="submit">{% translate 'Log out' %}</button>
+                  </form>
+                </div>
+              {% endif %}
+              {% endblock %}
+            </div>
+
+            <div id="admin-card" class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6">
+              {% block messages %}
+                {% if messages %}
+                  <ul class="messagelist">{% for message in messages %}
+                    <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message|capfirst }}</li>
+                  {% endfor %}</ul>
+                {% endif %}
+              {% endblock messages %}
+
+              {% block pretitle %}{% endblock %}
+              {% block content_title %}{% if title %}<h1>{{ title }}</h1>{% endif %}{% endblock %}
+              {% block content_subtitle %}{% if subtitle %}<h2>{{ subtitle }}</h2>{% endif %}{% endblock %}
+
+              <div class="admin-layout">
+                {% if not is_popup and is_nav_sidebar_enabled %}
+                  {% block nav-sidebar %}
+                    {% include "admin/nav_sidebar.html" %}
+                  {% endblock %}
+                {% endif %}
+                <div class="admin-content">
+                  {% block content %}
+                    {% block object-tools %}{% endblock %}
+                    {{ content }}
+                  {% endblock %}
+                  {% block sidebar %}{% endblock %}
+                  <br class="clear">
+                </div>
+              </div>
+              {% block footer %}{% endblock %}
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script>
+      document.getElementById('mobile-menu-button')?.addEventListener('click', function() {
+        document.getElementById('mobile-sidebar').classList.toggle('hidden');
+      });
+
+      function toggleDarkMode() {
+        const isDark = document.documentElement.classList.toggle('dark');
+        localStorage.setItem('theme', isDark ? 'dark' : 'light');
+        updateDarkModeIcon(isDark);
+      }
+
+      function updateDarkModeIcon(isDark) {
+        const icon = document.getElementById('darkModeIcon');
+        const label = document.getElementById('darkModeLabel');
+        if (!icon || !label) return;
+        if (isDark) {
+          icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"></path>';
+          label.textContent = 'Mode clair';
+        } else {
+          icon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>';
+          label.textContent = 'Mode sombre';
+        }
+      }
+
+      updateDarkModeIcon(document.documentElement.classList.contains('dark'));
+    </script>
+    {% block content_after %}{% endblock %}
+  </body>
+</html>

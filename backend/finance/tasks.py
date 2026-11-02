@@ -18,6 +18,18 @@ from finance.connectors.base import (
 from finance.models import Account, SyncLog
 from finance.services.sync_service import SyncService
 
+
+def _sync_account(account: Account, sync_type: str) -> Dict:
+    """Trade Republic passe par le bridge (session seule), les autres banques par SyncService."""
+    from finance.services.tr_bridge_sync import (
+        is_tr_bridge_account,
+        sync_tr_bridge_account_scheduled,
+    )
+
+    if is_tr_bridge_account(account):
+        return sync_tr_bridge_account_scheduled(account, sync_type)
+    return SyncService.sync_account(account, sync_type=sync_type)
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,7 +72,11 @@ def sync_all_bank_accounts() -> Dict:
                 f"(provider: {account.bank_connection.provider})"
             )
 
-            result = SyncService.sync_account(account, sync_type=SyncLog.SyncType.AUTOMATIC)
+            result = _sync_account(account, SyncLog.SyncType.AUTOMATIC)
+
+            if result.get("skipped"):
+                logger.info(f"Compte {account.id} sauté : {result.get('error')}")
+                continue
 
             if result["success"]:
                 results["success"] += 1
@@ -150,7 +166,7 @@ def sync_bank_account(account_id: int, sync_type: str = SyncLog.SyncType.AUTOMAT
     )
 
     try:
-        result = SyncService.sync_account(account, sync_type=sync_type)
+        result = _sync_account(account, sync_type)
 
         if result["success"]:
             logger.info(
@@ -198,6 +214,61 @@ def sync_bank_account(account_id: int, sync_type: str = SyncLog.SyncType.AUTOMAT
             exc_info=True,
         )
         raise
+
+
+@shared_task
+def reconcile_stale_sync_logs() -> Dict:
+    """
+    Réconcilie les SyncLog orphelins restés en STARTED.
+
+    Cause racine : lors d'un SIGKILL du worker (redéploiement, redémarrage, ou
+    backstop `CELERY_TASK_TIME_LIMIT`), le bloc `except` de `SyncService.sync_account`
+    ne peut pas s'exécuter — le SyncLog reste donc figé en `started`/`completed_at=NULL`
+    et s'affiche « en cours » indéfiniment (run bloqué), et la BankConnection peut
+    rester en `syncing`.
+
+    Cette tâche (Celery Beat) marque en ERROR tout log STARTED dont `started_at`
+    dépasse largement le hard time_limit, et débloque la connexion associée.
+    """
+    from datetime import timedelta
+
+    from django.conf import settings
+    from django.utils import timezone
+
+    from finance.models import BankConnection
+
+    hard_limit = int(getattr(settings, "CELERY_TASK_TIME_LIMIT", 660))
+    # Marge de sécurité : 2× le hard limit, minimum 15 min, pour ne jamais
+    # toucher un run réellement en cours.
+    threshold = timezone.now() - timedelta(seconds=max(hard_limit * 2, 900))
+
+    stale = SyncLog.objects.filter(
+        status=SyncLog.Status.STARTED,
+        completed_at__isnull=True,
+        started_at__lt=threshold,
+    )
+    conn_ids = list(stale.values_list("bank_connection_id", flat=True).distinct())
+    now = timezone.now()
+    reconciled = stale.update(
+        status=SyncLog.Status.ERROR,
+        completed_at=now,
+        error_message="Sync interrompue (worker redémarré ou crash)",
+    )
+
+    # Débloque les connexions restées en SYNCING à cause du run orphelin.
+    unblocked = BankConnection.objects.filter(
+        id__in=conn_ids, sync_status=BankConnection.SyncStatus.SYNCING
+    ).update(sync_status=BankConnection.SyncStatus.ERROR)
+
+    if reconciled:
+        logger.warning(
+            "Réconciliation: %d SyncLog orphelin(s) marqué(s) en ERROR, "
+            "%d connexion(s) débloquée(s)",
+            reconciled,
+            unblocked,
+        )
+
+    return {"reconciled": reconciled, "connections_unblocked": unblocked}
 
 
 # Tâche existante conservée pour compatibilité

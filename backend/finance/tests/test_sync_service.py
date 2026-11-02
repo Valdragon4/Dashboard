@@ -611,3 +611,4 @@ class TestSyncService(TestCase):
         # Vérifications : la transaction existante doit être mise à jour
         self.assertEqual(transaction.id, existing_transaction.id)
         self.assertEqual(Transaction.objects.filter(account=self.account).count(), 1)
+

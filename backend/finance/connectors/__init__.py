@@ -16,29 +16,43 @@ from finance.connectors.base import (
 from finance.connectors.traderepublic import TradeRepublicConnector
 from finance.connectors.powens import PowensConnector
 
-# Import conditionnel de BoursoBankConnector et HelloBankConnector
+# Import conditionnel de BoursoBankConnector et HelloBankConnector (nécessitent Playwright)
 try:
     from finance.connectors.boursorama import BoursoBankConnector
-except ImportError:
-    BoursoBankConnector = None
-
-try:
     from finance.connectors.hellobank import HelloBankConnector
+    __all__ = [
+        "BaseBankConnector",
+        "BankConnectionError",
+        "AuthenticationError",
+        "RateLimitError",
+        "ConnectionTimeoutError",
+        "InvalidCredentialsError",
+        "TradeRepublicConnector",
+        "PowensConnector",
+        "BoursoBankConnector",
+        "HelloBankConnector",
+    ]
 except ImportError:
-    HelloBankConnector = None
-
-__all__ = [
-    "BaseBankConnector",
-    "BankConnectionError",
-    "AuthenticationError",
-    "RateLimitError",
-    "ConnectionTimeoutError",
-    "InvalidCredentialsError",
-    "TradeRepublicConnector",
-    "PowensConnector",
-]
-
-if BoursoBankConnector is not None:
-    __all__.append("BoursoBankConnector")
-if HelloBankConnector is not None:
-    __all__.append("HelloBankConnector")
+    # Si Playwright n'est pas disponible, essayer d'importer seulement BoursoBankConnector
+    try:
+        from finance.connectors.boursorama import BoursoBankConnector
+        __all__ = [
+            "BaseBankConnector",
+            "BankConnectionError",
+            "AuthenticationError",
+            "RateLimitError",
+            "ConnectionTimeoutError",
+            "InvalidCredentialsError",
+            "TradeRepublicConnector",
+            "BoursoBankConnector",
+        ]
+    except ImportError:
+        __all__ = [
+            "BaseBankConnector",
+            "BankConnectionError",
+            "AuthenticationError",
+            "RateLimitError",
+            "ConnectionTimeoutError",
+            "InvalidCredentialsError",
+            "TradeRepublicConnector",
+        ]

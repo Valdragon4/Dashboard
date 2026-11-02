@@ -73,10 +73,28 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+AUTH_PASSWORD_VALIDATORS = [
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 8}},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+]
+
 # Celery
 CELERY_BROKER_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = CELERY_BROKER_URL
 CELERY_TIMEZONE = "Europe/Paris"
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_ACCEPT_CONTENT = ["json"]
+
+# Garde-temps des tâches : empêche qu'une sync bancaire figée (ex. appel Playwright
+# BoursoBank bloqué) n'immobilise un slot worker indéfiniment (cf. incident "sync en
+# cours depuis 3 jours"). Le soft limit lève SoftTimeLimitExceeded (attrapé par
+# SyncService.sync_account -> SyncLog finalisé en ERROR) ; le hard limit est le
+# backstop SIGKILL si le soft n'interrompt pas un appel natif bloqué.
+CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv("CELERY_TASK_SOFT_TIME_LIMIT", "600"))
+CELERY_TASK_TIME_LIMIT = int(os.getenv("CELERY_TASK_TIME_LIMIT", "660"))
 
 from celery.schedules import crontab  # noqa: E402
 
@@ -91,14 +109,48 @@ CELERY_BEAT_SCHEDULE = {
         "task": "finance.tasks.cleanup_old_sync_logs",
         "schedule": crontab(hour=1, minute=0),
     },
+    # Réconcilie les runs orphelins (STARTED figé après SIGKILL) toutes les 15 min
+    "reconcile-stale-sync-logs": {
+        "task": "finance.tasks.reconcile_stale_sync_logs",
+        "schedule": crontab(minute="*/15"),
+    },
 }
 
-CORS_ALLOW_ALL_ORIGINS = True
+_cors_env = os.getenv("DJANGO_CORS_ALLOWED_ORIGINS", "").strip()
+CORS_ALLOWED_ORIGINS = [o for o in _cors_env.split(",") if o]
+CORS_ALLOW_ALL_ORIGINS = not CORS_ALLOWED_ORIGINS
 
 # Auth
 LOGIN_URL = "/accounts/login/"
 LOGIN_REDIRECT_URL = "/"
 LOGOUT_REDIRECT_URL = "/"
+
+# ─── Email SMTP ───────────────────────────────────────────────────────────────
+EMAIL_BACKEND = (
+    "django.core.mail.backends.smtp.EmailBackend"
+    if os.getenv("EMAIL_HOST_PASSWORD", "").strip() not in ("", "CHANGE_ME_mot_de_passe_application")
+    else "django.core.mail.backends.console.EmailBackend"
+)
+EMAIL_HOST = os.getenv("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.getenv("EMAIL_PORT", "587"))
+EMAIL_USE_TLS = os.getenv("EMAIL_USE_TLS", "True").lower() in ("1", "true", "yes")
+EMAIL_HOST_USER = os.getenv("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.getenv("EMAIL_HOST_PASSWORD", "")
+DEFAULT_FROM_EMAIL = os.getenv("EMAIL_DEFAULT_FROM", EMAIL_HOST_USER)
+
+# ─── Sécurité cookies/sessions (HTTPS only) ──────────────────────────────────
+_https = os.getenv("DJANGO_USE_XFORWARDED_PROTO", "false").lower() in {"1", "true", "yes"}
+SESSION_COOKIE_SECURE = _https
+CSRF_COOKIE_SECURE = _https
+SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = False  # doit rester False : le JS doit lire ce cookie pour les requêtes AJAX
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_SAMESITE = "Lax"
+if _https:
+    SECURE_HSTS_SECONDS = 31536000  # 1 an
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_SSL_REDIRECT = False  # Nginx gère la redirection HTTP→HTTPS
 
 # CSRF / Proxy SSL
 # Exemple d'env: DJANGO_CSRF_TRUSTED_ORIGINS=https://finance.valentin-marot.fr
@@ -161,11 +213,38 @@ TRADEPUBLIC_USE_PLAYWRIGHT_INITIATE = os.getenv("TRADEPUBLIC_USE_PLAYWRIGHT_INIT
 #   Mettre en place le tunnel SSH côté serveur :
 #     ssh -D 1080 -N -f user@ma-machine-perso
 #   Puis exposer le port dans docker-compose si le worker tourne dans Docker.
-BOURSOBANK_TIMEOUT_MS = int(os.getenv("BOURSOBANK_TIMEOUT_MS", "15000"))
-BOURSOBANK_SECURITY_WAIT_SECONDS = int(os.getenv("BOURSOBANK_SECURITY_WAIT_SECONDS", "180"))
+BOURSOBANK_TIMEOUT_MS = int(os.getenv("BOURSOBANK_TIMEOUT_MS", "60000"))
+BOURSOBANK_AUTH_TIMEOUT_MS = int(os.getenv("BOURSOBANK_AUTH_TIMEOUT_MS", "30000"))
+BOURSOBANK_TX_TIMEOUT_MS = int(os.getenv("BOURSOBANK_TX_TIMEOUT_MS", "30000"))
+BOURSOBANK_BALANCE_TIMEOUT_MS = int(os.getenv("BOURSOBANK_BALANCE_TIMEOUT_MS", "10000"))
 BOURSOBANK_HEADLESS = os.getenv("BOURSOBANK_HEADLESS", "1") == "1"
-BOURSOBANK_SAVE_TRACE = os.getenv("BOURSOBANK_SAVE_TRACE", "1") == "1"
 BOURSOBANK_DATA_DIR = os.getenv("BOURSOBANK_DATA_DIR", str(BASE_DIR / "boursobank-data"))
-BOURSOBANK_PROXY = os.getenv("BOURSOBANK_PROXY", "")  # ex: "socks5://host.docker.internal:1080"
+BOURSOBANK_PROXY = os.getenv("BOURSOBANK_PROXY", "")
+BOURSOBANK_ACCOUNT_NUMBER = os.getenv("BOURSOBANK_ACCOUNT_NUMBER", "")
+# Nombre max de clics "Mouvements précédents" en fallback DOM (garde-fou dur).
+BOURSOBANK_MAX_PREVIOUS_CLICKS = int(os.getenv("BOURSOBANK_MAX_PREVIOUS_CLICKS", "160"))
+# Marge (jours) sous `since` avant d'arrêter la pagination, pour rattraper les
+# opérations postées en retard. Une sync quotidienne ne remonte donc que ~3 jours.
+BOURSOBANK_SINCE_MARGIN_DAYS = int(os.getenv("BOURSOBANK_SINCE_MARGIN_DAYS", "3"))
+
+# Trade Republic Bridge (Bun/TS)
+TR_BRIDGE_ENABLED = os.getenv("TR_BRIDGE_ENABLED", "0") == "1"
+TR_BRIDGE_SHADOW_MODE = os.getenv("TR_BRIDGE_SHADOW_MODE", "0") == "1"
+TR_BRIDGE_BUN_BIN = os.getenv("TR_BRIDGE_BUN_BIN", "bun")
+TR_BRIDGE_SCRIPT_PATH = os.getenv("TR_BRIDGE_SCRIPT_PATH", "")
+TR_BRIDGE_CWD = os.getenv("TR_BRIDGE_CWD", "")
+TR_BRIDGE_TIMEOUT_SECONDS = int(os.getenv("TR_BRIDGE_TIMEOUT_SECONDS", "90"))
+TR_BRIDGE_RAW_OUTPUT_MAX_CHARS = int(os.getenv("TR_BRIDGE_RAW_OUTPUT_MAX_CHARS", "20000"))
+#
+# Limite du nombre de transactions récupérées par le bridge.
+# - mets une valeur élevée (ex: 5000) pour couvrir la plupart des cas
+# - mets 0 pour considérer "illimité" (taille bornée uniquement par les arrêts naturels: absence de next cursor, etc.)
+#
+TR_BRIDGE_TX_LIMIT = int(os.getenv("TR_BRIDGE_TX_LIMIT", "5000"))
+
+# Limite du nombre de pages (pagination `nextCursor`) récupérées par le bridge.
+# - mets 0 pour considérer "illimité" (taille bornée uniquement par l'absence de next cursor,
+#   ou la répétition d'un cursor).
+TR_BRIDGE_MAX_PAGES = int(os.getenv("TR_BRIDGE_MAX_PAGES", "5000"))
 
 

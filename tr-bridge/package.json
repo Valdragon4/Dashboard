@@ -1,0 +1,13 @@
+{
+  "name": "tr-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun run index.ts"
+  },
+  "dependencies": {
+    "puppeteer": "24.42.0",
+    "trapi": "github:NightOwl07/trade-republic-api#5a33fed"
+  }
+}

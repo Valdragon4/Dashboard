@@ -80,6 +80,7 @@
                       type="button"
                       onclick="syncAccount({{ a.id }})"
                       data-account-id="{{ a.id }}"
+                      data-provider="{{ a.provider }}"
                       class="sync-button px-2 py-1 text-xs text-primary hover:text-primary-dark hover:bg-primary/10 rounded-lg transition-colors font-medium"
                       title="Synchroniser maintenant">
                       ⟳ Sync
@@ -135,6 +136,17 @@
   </div>
   
   <script>
+    async function parseApiResponse(response) {
+      const rawText = await response.text();
+      let data = null;
+      try {
+        data = rawText ? JSON.parse(rawText) : null;
+      } catch {
+        data = null;
+      }
+      return { status: response.status, ok: response.ok, data, rawText };
+    }
+
     function toggleDashboard(accountId, checkbox) {
       // Récupérer le token CSRF
       const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
@@ -182,6 +194,16 @@
       // Désactiver le bouton et afficher spinner
       button.disabled = true;
       button.innerHTML = '<span class="animate-spin">⟳</span> Sync...';
+
+      // Trade Republic : la connexion se valide par une notification dans l'appli mobile,
+      // la requête reste en attente pendant ce temps (2 min max).
+      let trNotice = null;
+      if (button.dataset.provider === 'traderepublic') {
+        trNotice = document.createElement('div');
+        trNotice.className = 'fixed top-4 right-4 bg-blue-50 border border-blue-200 text-blue-800 px-4 py-3 rounded-lg shadow-lg z-50';
+        trNotice.textContent = 'Si une notification Trade Republic arrive sur ton téléphone, valide-la (2 min max).';
+        document.body.appendChild(trNotice);
+      }
       
       // Récupérer le token CSRF
       const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
@@ -194,7 +216,16 @@
           'X-CSRFToken': csrftoken,
         },
       })
-      .then(response => response.json())
+      .then(parseApiResponse)
+      .then(async ({ status, ok, data, rawText }) => {
+        if (status === 409 && data && data.auth_required) {
+          throw new Error('connexion Trade Republic non validée dans l\'appli');
+        }
+        if (!ok) {
+          throw new Error((data && data.error) || rawText || `Erreur HTTP ${status}`);
+        }
+        return data;
+      })
       .then(data => {
         if (data.success) {
           // Afficher notification de succès (utiliser les messages Django si disponibles)
@@ -229,7 +260,7 @@
         // Afficher notification d'erreur
         const notification = document.createElement('div');
         notification.className = 'fixed top-4 right-4 bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-lg shadow-lg z-50';
-        notification.textContent = 'Erreur de connexion au serveur';
+        notification.textContent = 'Erreur : ' + (error.message || 'connexion au serveur impossible');
         document.body.appendChild(notification);
         
         setTimeout(() => {
@@ -237,6 +268,7 @@
         }, 5000);
       })
       .finally(() => {
+        if (trNotice) trNotice.remove();
         // Réactiver le bouton
         button.disabled = false;
         button.textContent = originalText;
