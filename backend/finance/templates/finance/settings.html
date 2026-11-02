@@ -23,6 +23,38 @@
     </a>
   </div>
 
+  {% if checking_accounts %}
+  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-8">
+    <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-2">Solde courant</h2>
+    <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+      Comptes courants additionnés dans la carte « Solde courant » du tableau de bord.
+      Un compte décoché reste compté dans le patrimoine total.
+    </p>
+    <form method="post">
+      {% csrf_token %}
+      <input type="hidden" name="form" value="current_balance">
+      <div class="space-y-2">
+        {% for account in checking_accounts %}
+        <label class="flex items-center justify-between gap-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600 cursor-pointer">
+          <span class="flex items-center gap-3 min-w-0">
+            <input type="checkbox" name="current_balance_accounts" value="{{ account.id }}"
+                   {% if account.include_in_current_balance %}checked{% endif %}
+                   class="rounded border-gray-300 text-primary focus:ring-primary">
+            <span class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ account.name }}</span>
+          </span>
+          <span class="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+            {% if account.currency != 'EUR' %}{{ account.currency }} · {% endif %}{% if not account.include_in_dashboard %}masqué du tableau de bord{% elif account.bank_connection_id %}synchronisé{% else %}manuel{% endif %}
+          </span>
+        </label>
+        {% endfor %}
+      </div>
+      <button type="submit" class="mt-4 px-6 py-2 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark transition-colors shadow-sm">
+        Enregistrer
+      </button>
+    </form>
+  </div>
+  {% endif %}
+
   {% if tr_subaccounts %}
   <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 mb-8">
     <h2 class="text-xl font-bold text-gray-900 mb-2">Sous-comptes Trade Republic</h2>

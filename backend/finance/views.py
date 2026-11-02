@@ -327,7 +327,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         type=Account.AccountType.CHECKING,
         include_in_dashboard=True,
     )
-    checking_balance = 0
+    checking_balance = 0  # comptes choisis dans Paramètres (carte « Solde courant »)
+    checking_balance_all = 0  # tous les comptes courants affichés (patrimoine)
     checking_balance_at_start = 0
     checking_accounts_list = []
     
@@ -341,6 +342,9 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         # Solde courant: toujours prendre la transaction la plus récente (jusqu'à maintenant),
         # indépendamment de la période affichée.
         account_balance = _balance_as_of(account, current_balance_cutoff)
+        checking_balance_all += account_balance
+        if not account.include_in_current_balance:
+            continue
         checking_balance += account_balance
         
         checking_accounts_list.append({
@@ -523,7 +527,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     period_balance = checking_balance - checking_balance_at_start
     
     # Patrimoine total = solde courant + épargne + valorisation des investissements
-    total_wealth = checking_balance + savings_balance + current_valuation
+    total_wealth = checking_balance_all + savings_balance + current_valuation
 
     # Calculer history_start en soustrayant 5 mois depuis la date de début
     history_start_date = start_date - relativedelta(months=5)
@@ -1041,6 +1045,20 @@ def accounts(request: HttpRequest) -> HttpResponse:
 
 @login_required
 def settings_view(request: HttpRequest) -> HttpResponse:
+    checking_accounts = Account.objects.filter(
+        owner=request.user, type=Account.AccountType.CHECKING
+    ).order_by("name")
+
+    if request.method == "POST" and request.POST.get("form") == "current_balance":
+        selected = {int(x) for x in request.POST.getlist("current_balance_accounts") if x.isdigit()}
+        for account in checking_accounts:
+            wanted = account.id in selected
+            if account.include_in_current_balance != wanted:
+                account.include_in_current_balance = wanted
+                account.save(update_fields=["include_in_current_balance"])
+        messages.success(request, "Comptes du solde courant mis à jour.")
+        return redirect("settings")
+
     if request.method == "POST":
         valid_types = {value for value, _ in TradeRepublicPortfolioSnapshot.PortfolioType.choices}
         mappings = TradeRepublicSubAccountMapping.objects.filter(owner=request.user)
@@ -1059,6 +1077,7 @@ def settings_view(request: HttpRequest) -> HttpResponse:
         {
             "tr_subaccounts": tr_subaccounts,
             "tr_portfolio_types": TradeRepublicPortfolioSnapshot.PortfolioType.choices,
+            "checking_accounts": checking_accounts,
         },
     )
 

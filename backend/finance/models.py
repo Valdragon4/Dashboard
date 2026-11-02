@@ -38,6 +38,11 @@ class Account(models.Model):
     initial_balance = models.DecimalField(max_digits=16, decimal_places=2, default=0, help_text="Solde initial avant toutes les transactions importées")
     balance_snapshot_date = models.DateField(null=True, blank=True, help_text="Date du snapshot du solde initial")
     include_in_dashboard = models.BooleanField(default=True, help_text="Inclure ce compte dans les statistiques du dashboard")
+    include_in_current_balance = models.BooleanField(
+        default=True,
+        help_text="Compter ce compte courant dans la carte « Solde courant » (Paramètres). "
+        "Il reste compté dans le patrimoine total.",
+    )
     # Extension pour synchronisation automatique
     bank_connection = models.ForeignKey(
         "BankConnection",
