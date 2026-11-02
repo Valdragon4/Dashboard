@@ -3,21 +3,21 @@
 {% block content %}
   <div class="mb-8">
     <div class="flex items-center gap-3 mb-2">
-      <a href="/accounts/" class="text-gray-500 hover:text-gray-700">
+      <a href="/accounts/" class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
         </svg>
       </a>
-      <h1 class="text-3xl font-bold text-gray-900">{{ title }}</h1>
+      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">{{ title }}</h1>
     </div>
-    <p class="text-gray-600 ml-9">Créez un nouveau compte bancaire ou d'investissement</p>
+    <p class="text-gray-600 dark:text-gray-400 ml-9">{% if account %}Nom, type et devise du compte ; sa synchronisation et son solde ne changent pas.{% else %}Créez un nouveau compte bancaire ou d'investissement{% endif %}</p>
   </div>
 
-  <form method="post" class="bg-white rounded-2xl shadow-lg border border-gray-200 p-8 max-w-2xl">
+  <form method="post" class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-8 max-w-2xl">
     {% csrf_token %}
     
     {% if form.non_field_errors %}
-    <div class="mb-6 bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-800">
+    <div class="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 text-sm text-red-800 dark:text-red-300">
       {{ form.non_field_errors }}
     </div>
     {% endif %}
@@ -25,7 +25,7 @@
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
       <!-- Nom du compte -->
       <div class="md:col-span-2">
-        <label for="{{ form.name.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+        <label for="{{ form.name.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
           {{ form.name.label }} <span class="text-red-500">*</span>
         </label>
         <input type="text" 
@@ -33,80 +33,80 @@
                id="{{ form.name.id_for_label }}"
                value="{{ form.name.value|default:'' }}"
                required
-               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+               class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                placeholder="Ex: Compte courant BoursoBank">
         {% if form.name.errors %}
-        <div class="mt-1 text-sm text-red-600">{{ form.name.errors|striptags }}</div>
+        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.name.errors|striptags }}</div>
         {% endif %}
       </div>
 
       <!-- Type de compte -->
       <div>
-        <label for="{{ form.type.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+        <label for="{{ form.type.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
           {{ form.type.label }} <span class="text-red-500">*</span>
         </label>
         <select name="{{ form.type.name }}" 
                 id="{{ form.type.id_for_label }}"
                 required
                 onchange="togglePortfolioType()"
-                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent">
+                class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent">
           <option value="">Sélectionnez un type</option>
           {% for value, label in form.type.field.choices %}
             <option value="{{ value }}" {% if form.type.value == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
         {% if form.type.errors %}
-        <div class="mt-1 text-sm text-red-600">{{ form.type.errors|striptags }}</div>
+        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.type.errors|striptags }}</div>
         {% endif %}
       </div>
 
       <!-- Type de portefeuille (uniquement pour broker) -->
                <div id="portfolio-type-container" style="display: none;">
-                 <label for="{{ form.portfolio_type.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+                 <label for="{{ form.portfolio_type.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                    {{ form.portfolio_type.label }}
-                   <span class="text-xs text-gray-500">(Optionnel)</span>
+                   <span class="text-xs text-gray-500 dark:text-gray-400">(Optionnel)</span>
                  </label>
                  <select name="{{ form.portfolio_type.name }}"
                          id="{{ form.portfolio_type.id_for_label }}"
-                         class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent">
+                         class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent">
                    <option value="">Non spécifié</option>
                    {% for value, label in form.portfolio_type.field.choices %}
                      <option value="{{ value }}" {% if form.portfolio_type.value == value %}selected{% endif %}>{{ label }}</option>
                    {% endfor %}
                  </select>
                  {% if form.portfolio_type.errors %}
-                 <div class="mt-1 text-sm text-red-600">{{ form.portfolio_type.errors|striptags }}</div>
+                 <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.portfolio_type.errors|striptags }}</div>
                  {% endif %}
-                 <div class="mt-1 text-xs text-gray-500">
+                 <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                    💡 Utile pour distinguer CTO, PEA, Crypto, etc.
                  </div>
                </div>
 
       <!-- Devise -->
       <div>
-        <label for="{{ form.currency.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+        <label for="{{ form.currency.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
           {{ form.currency.label }}
         </label>
         <input type="text" 
                name="{{ form.currency.name }}" 
                id="{{ form.currency.id_for_label }}"
                value="{{ form.currency.value|default:'EUR' }}"
-               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+               class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                placeholder="EUR">
         {% if form.currency.errors %}
-        <div class="mt-1 text-sm text-red-600">{{ form.currency.errors|striptags }}</div>
+        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.currency.errors|striptags }}</div>
         {% endif %}
       </div>
 
       <!-- Fournisseur -->
       <div>
-        <label for="{{ form.provider.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+        <label for="{{ form.provider.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
           {{ form.provider.label }}
-          <span class="text-xs text-gray-500">(Optionnel)</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400">(Optionnel)</span>
         </label>
         <select name="{{ form.provider.name }}"
                 id="{{ form.provider.id_for_label }}"
-                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent">
+                class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent">
           <option value="">Non spécifié</option>
           {% for value, label in form.provider.field.choices %}
             {% if value %}
@@ -115,32 +115,32 @@
           {% endfor %}
         </select>
         {% if form.provider.errors %}
-        <div class="mt-1 text-sm text-red-600">{{ form.provider.errors|striptags }}</div>
+        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.provider.errors|striptags }}</div>
         {% endif %}
       </div>
 
       <!-- IBAN -->
       <div class="md:col-span-2">
-        <label for="{{ form.iban.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+        <label for="{{ form.iban.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
           {{ form.iban.label }}
-          <span class="text-xs text-gray-500">(Optionnel)</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400">(Optionnel)</span>
         </label>
         <input type="text" 
                name="{{ form.iban.name }}" 
                id="{{ form.iban.id_for_label }}"
                value="{{ form.iban.value|default:'' }}"
-               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent font-mono text-sm"
+               class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent font-mono text-sm"
                placeholder="FR76 XXXX XXXX XXXX XXXX XXXX XXX">
         {% if form.iban.errors %}
-        <div class="mt-1 text-sm text-red-600">{{ form.iban.errors|striptags }}</div>
+        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.iban.errors|striptags }}</div>
         {% endif %}
       </div>
 
       <!-- Taux d'intérêt -->
       <div class="md:col-span-2">
-        <label for="{{ form.interest_rate_apy.id_for_label }}" class="block text-sm font-medium text-gray-700 mb-2">
+        <label for="{{ form.interest_rate_apy.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
           {{ form.interest_rate_apy.label }}
-          <span class="text-xs text-gray-500">(Optionnel, pour les livrets)</span>
+          <span class="text-xs text-gray-500 dark:text-gray-400">(Optionnel, pour les livrets)</span>
         </label>
         <div class="relative">
           <input type="number" 
@@ -148,16 +148,16 @@
                  name="{{ form.interest_rate_apy.name }}" 
                  id="{{ form.interest_rate_apy.id_for_label }}"
                  value="{{ form.interest_rate_apy.value|default:'' }}"
-                 class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
+                 class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
                  placeholder="0.0300">
           <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-            <span class="text-gray-500 text-sm">% APY</span>
+            <span class="text-gray-500 dark:text-gray-400 text-sm">% APY</span>
           </div>
         </div>
         {% if form.interest_rate_apy.errors %}
-        <div class="mt-1 text-sm text-red-600">{{ form.interest_rate_apy.errors|striptags }}</div>
+        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.interest_rate_apy.errors|striptags }}</div>
         {% endif %}
-        <div class="mt-1 text-xs text-gray-500">
+        <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
           💡 Exemple : Pour 3%, entrez 0.0300
         </div>
       </div>
@@ -168,7 +168,7 @@
       <button type="submit" class="px-6 py-3 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark transition-colors shadow-sm">
         ✓ Enregistrer le compte
       </button>
-      <a href="/accounts/" class="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg font-medium hover:bg-gray-200 transition-colors">
+      <a href="/accounts/" class="px-6 py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
         Annuler
       </a>
     </div>

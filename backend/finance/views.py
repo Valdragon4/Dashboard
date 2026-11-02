@@ -1145,6 +1145,25 @@ def account_create(request: HttpRequest) -> HttpResponse:
 
 
 @login_required
+def account_update(request: HttpRequest, account_id: int) -> HttpResponse:
+    """Modifier un compte (nom, type, devise…) — y compris un compte synchronisé."""
+    account = get_object_or_404(Account, id=account_id, owner=request.user)
+    if request.method == "POST":
+        form = AccountForm(request.POST, instance=account)
+        if form.is_valid():
+            form.save()
+            messages.success(request, f"Compte « {account.name} » enregistré.")
+            return redirect("accounts")
+    else:
+        form = AccountForm(instance=account)
+    return render(
+        request,
+        "finance/account_form.html",
+        {"form": form, "title": f"Modifier « {account.name} »", "account": account},
+    )
+
+
+@login_required
 def transaction_create(request: HttpRequest) -> HttpResponse:
     if request.method == "POST":
         form = TransactionForm(request.POST)

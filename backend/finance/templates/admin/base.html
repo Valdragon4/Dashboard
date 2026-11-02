@@ -175,6 +175,7 @@
       .dark .deletelink, .dark a.deletelink { background: #374151; border-color: #7f1d1d; }
       .deletelink:hover { background: #fef2f2; }
       .addlink { color: #6366f1 !important; }
+      .dark .addlink { color: #a5b4fc !important; }
 
       .submit-row {
         display: flex; gap: .5rem; align-items: center; margin-top: 1.5rem; padding-top: 1.25rem;
@@ -308,7 +309,7 @@
             </a>
             {% if user.is_superuser %}
             <div class="pt-2 border-t border-gray-100 dark:border-gray-700 space-y-1">
-              <p class="px-4 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider mb-1">Administration</p>
+              <p class="px-4 text-xs font-semibold text-gray-400 dark:text-gray-400 uppercase tracking-wider mb-1">Administration</p>
               <a href="{% url 'user_list' %}" class="flex items-center px-4 py-2.5 text-sm font-medium rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
                 <svg class="w-5 h-5 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"></path>
@@ -347,7 +348,7 @@
                 <p class="text-xs text-gray-500 dark:text-gray-400 truncate">{{ user.email }}</p>
               </div>
               <a href="/" title="Retour à l'application"
-                 class="p-1.5 rounded-lg text-gray-400 hover:text-primary hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex-shrink-0">
+                 class="p-1.5 rounded-lg text-gray-400 hover:text-primary dark:hover:text-primary-light hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex-shrink-0">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
                 </svg>
@@ -446,7 +447,7 @@
               {% endblock %}
             </div>
 
-            <div id="admin-card" class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-6">
+            <div id="admin-card" class="bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 rounded-2xl shadow-lg p-6">
               {% block messages %}
                 {% if messages %}
                   <ul class="messagelist">{% for message in messages %}

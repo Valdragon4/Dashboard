@@ -4,15 +4,15 @@
   <div class="mb-8">
     <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
       <div>
-        <h1 class="text-3xl font-bold text-gray-900 mb-2">Paramètres</h1>
-        <p class="text-gray-600">Préférences de l'application et navigation rapide</p>
+        <h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">Paramètres</h1>
+        <p class="text-gray-600 dark:text-gray-400">Préférences de l'application et navigation rapide</p>
       </div>
     </div>
   </div>
 
-  <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 mb-8">
-    <h2 class="text-xl font-bold text-gray-900 mb-2">Synchronisation automatique</h2>
-    <p class="text-sm text-gray-600 mb-4">
+  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-8">
+    <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-2">Synchronisation automatique</h2>
+    <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
       La synchronisation des comptes est centralisée dans le panel Connexions Bancaires.
     </p>
     <a
@@ -39,7 +39,7 @@
           <span class="flex items-center gap-3 min-w-0">
             <input type="checkbox" name="current_balance_accounts" value="{{ account.id }}"
                    {% if account.include_in_current_balance %}checked{% endif %}
-                   class="rounded border-gray-300 text-primary focus:ring-primary">
+                   class="rounded border-gray-300 dark:border-gray-600 text-primary dark:text-primary-light focus:ring-primary">
             <span class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ account.name }}</span>
           </span>
           <span class="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
@@ -85,14 +85,14 @@
           {% endif %}
           <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
             <label class="text-xs text-gray-600 dark:text-gray-400">Type de livret
-              <select name="product_{{ row.account.id }}" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm">
+              <select name="product_{{ row.account.id }}" class="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
                 <option value="">— Aucun (compte manuel) —</option>
                 {% for value, label in savings_products %}<option value="{{ value }}" {% if row.account.savings_product == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
               </select>
             </label>
             <label class="text-xs text-gray-600 dark:text-gray-400">Solde réel aujourd'hui (optionnel)
               <input type="text" inputmode="decimal" name="balance_{{ row.account.id }}" placeholder="ex. 1037,02"
-                     class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm">
+                     class="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
             </label>
           </div>
         </div>
@@ -112,9 +112,9 @@
         {% csrf_token %}
         <input type="hidden" name="form" value="savings_assign">
         <input type="hidden" name="tx_id" value="{{ tx.id }}">
-        <span class="text-sm text-gray-900 dark:text-white flex-1 min-w-[10rem]">{{ tx.posted_at|date:"d/m/Y" }} · +{{ tx.amount|floatformat:2 }} € <span class="text-xs text-gray-500">({{ tx.account.name }})</span></span>
+        <span class="text-sm text-gray-900 dark:text-white flex-1 min-w-[10rem]">{{ tx.posted_at|date:"d/m/Y" }} · +{{ tx.amount|floatformat:2 }} € <span class="text-xs text-gray-500 dark:text-gray-400">({{ tx.account.name }})</span></span>
         {% for a in livret_accounts %}
-        <button name="target" value="{{ a.id }}" class="px-3 py-1 text-xs font-medium text-primary border border-primary/40 rounded-lg hover:bg-primary hover:text-white">Depuis {{ a.get_savings_product_display }}</button>
+        <button name="target" value="{{ a.id }}" class="px-3 py-1 text-xs font-medium text-primary dark:text-primary-light border border-primary/40 rounded-lg hover:bg-primary hover:text-white">Depuis {{ a.get_savings_product_display }}</button>
         {% endfor %}
         <button name="target" value="none" class="px-3 py-1 text-xs text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700">Pas un livret</button>
       </form>
@@ -125,9 +125,9 @@
   {% endif %}
 
   {% if tr_subaccounts %}
-  <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6 mb-8">
-    <h2 class="text-xl font-bold text-gray-900 mb-2">Sous-comptes Trade Republic</h2>
-    <p class="text-sm text-gray-600 mb-4">
+  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-8">
+    <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-2">Sous-comptes Trade Republic</h2>
+    <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
       Indiquez le type fiscal de chaque sous-compte détecté lors de la synchronisation
       (PEA, CTO, PEA-PME, Crypto). Tant qu'un sous-compte n'est pas classé, il est
       compté par défaut en CTO.
@@ -136,14 +136,14 @@
       {% csrf_token %}
       <div class="space-y-3">
         {% for mapping in tr_subaccounts %}
-        <div class="flex items-center justify-between gap-4 p-3 bg-gray-50 rounded-lg border border-gray-200">
+        <div class="flex items-center justify-between gap-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700">
           <div>
-            <span class="font-mono text-sm text-gray-900">{{ mapping.external_account_id }}</span>
+            <span class="font-mono text-sm text-gray-900 dark:text-white">{{ mapping.external_account_id }}</span>
             {% if not mapping.portfolio_type %}
-            <span class="ml-2 text-xs font-medium text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">À classer</span>
+            <span class="ml-2 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 rounded-full">À classer</span>
             {% endif %}
           </div>
-          <select name="portfolio_type_{{ mapping.id }}" class="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
+          <select name="portfolio_type_{{ mapping.id }}" class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
             <option value="">Non classé</option>
             {% for value, label in tr_portfolio_types %}
             <option value="{{ value }}" {% if mapping.portfolio_type == value %}selected{% endif %}>{{ label }}</option>
@@ -159,27 +159,27 @@
   </div>
   {% endif %}
 
-  <h3 class="text-xl font-bold text-gray-900 mb-4">Préférences d'affichage</h3>
-  <div class="bg-white rounded-2xl shadow-lg border border-gray-200 p-6">
+  <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-4">Préférences d'affichage</h3>
+  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6">
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <div class="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center">
-          <svg class="w-6 h-6 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div class="w-12 h-12 bg-gray-100 dark:bg-gray-700 rounded-xl flex items-center justify-center">
+          <svg class="w-6 h-6 text-gray-700 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
           </svg>
         </div>
         <div>
-          <h3 class="text-lg font-bold text-gray-900">Thème sombre</h3>
-          <p class="text-sm text-gray-600">Activez le mode sombre pour réduire la fatigue oculaire</p>
+          <h3 class="text-lg font-bold text-gray-900 dark:text-white">Thème sombre</h3>
+          <p class="text-sm text-gray-600 dark:text-gray-400">Activez le mode sombre pour réduire la fatigue oculaire</p>
         </div>
       </div>
       <label class="relative inline-flex items-center cursor-pointer">
         <input type="checkbox" id="darkModeToggle" class="sr-only peer">
-        <div class="w-14 h-7 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-light rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary"></div>
+        <div class="w-14 h-7 bg-gray-200 dark:bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-light rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary"></div>
       </label>
     </div>
-    <div class="mt-4 p-4 bg-gray-50 rounded-lg border border-gray-200">
-      <p class="text-xs text-gray-700">
+    <div class="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700">
+      <p class="text-xs text-gray-700 dark:text-gray-300">
         <strong>Note :</strong> Le thème est enregistré dans votre navigateur.
       </p>
     </div>
@@ -201,6 +201,8 @@
         htmlElement.classList.remove('dark');
         localStorage.setItem('theme', 'light');
       }
+      if (typeof updateDarkModeIcon === 'function') updateDarkModeIcon(this.checked);
+      window.dispatchEvent(new CustomEvent('themechange', { detail: { dark: this.checked } }));
     });
   </script>
 {% endblock %}

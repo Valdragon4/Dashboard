@@ -10,6 +10,7 @@ urlpatterns = [
     path("accounts/", views.accounts, name="accounts"),
     path("accounts/new/", views.account_create, name="account_create"),
     path("accounts/<int:account_id>/", views.account_detail, name="account_detail"),
+    path("accounts/<int:account_id>/edit/", views.account_update, name="account_update"),
     path("accounts/<int:account_id>/delete/", views.account_delete, name="account_delete"),
     path("accounts/<int:account_id>/delete-all-transactions/", views.delete_all_investment_transactions, name="delete_all_investment_transactions"),
     path("reset/user", views.reset_user_finance, name="reset_user_finance"),

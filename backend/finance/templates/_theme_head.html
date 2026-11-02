@@ -1,0 +1,16 @@
+{# Thème : à inclure dans <head> de chaque page, avant le rendu (pas de flash). #}
+<script>
+  if (localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark');
+</script>
+<style>
+  /* Contrôles natifs (calendrier, listes, barres de défilement) au thème sombre. */
+  html.dark { color-scheme: dark; }
+  /* Champs sans classe de fond explicite : :where() garde une spécificité nulle,
+     les classes Tailwind de la page l'emportent toujours. */
+  :where(html.dark) :where(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]):not([type=submit]):not([type=button]), select, textarea) {
+    background-color: rgb(55 65 81);
+    color: #fff;
+    border-color: rgb(75 85 99);
+  }
+  :where(html.dark) :where(input, textarea)::placeholder { color: rgb(156 163 175); }
+</style>

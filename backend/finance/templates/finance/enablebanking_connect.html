@@ -16,7 +16,7 @@
   {% if messages %}
     <div class="mb-6">
       {% for message in messages %}
-        <div class="mb-3 p-4 rounded-lg {% if message.tags == 'error' %}bg-red-50 border border-red-200 text-red-800{% else %}bg-blue-50 border border-blue-200 text-blue-800{% endif %}">{{ message }}</div>
+        <div class="mb-3 p-4 rounded-lg {% if message.tags == 'error' %}bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300{% else %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300{% endif %}">{{ message }}</div>
       {% endfor %}
     </div>
   {% endif %}
@@ -25,21 +25,21 @@
     <form method="get" class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
       <label class="block text-sm">
         <span class="text-gray-700 dark:text-gray-300 font-medium">Pays de la banque</span>
-        <select name="country" onchange="this.form.submit()" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm">
+        <select name="country" onchange="this.form.submit()" class="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
           {% for code, label in countries %}<option value="{{ code }}" {% if code == country %}selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
       </label>
       <label class="block text-sm">
         <span class="text-gray-700 dark:text-gray-300 font-medium">Type de compte</span>
-        <select name="psu_type" onchange="this.form.submit()" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm">
+        <select name="psu_type" onchange="this.form.submit()" class="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
           {% for code, label in psu_types %}<option value="{{ code }}" {% if code == psu_type %}selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
       </label>
-      <noscript><button type="submit" class="text-sm text-primary">Actualiser la liste</button></noscript>
+      <noscript><button type="submit" class="text-sm text-primary dark:text-primary-light">Actualiser la liste</button></noscript>
     </form>
 
     {% if error %}
-      <div class="p-4 rounded-lg bg-red-50 border border-red-200 text-red-800 text-sm">Liste des banques indisponible : {{ error }}</div>
+      <div class="p-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300 text-sm">Liste des banques indisponible : {{ error }}</div>
     {% else %}
       <form method="post">
         {% csrf_token %}
@@ -47,7 +47,7 @@
         <input type="hidden" name="psu_type" value="{{ psu_type }}">
         <label class="block text-sm mb-4">
           <span class="text-gray-700 dark:text-gray-300 font-medium">Banque</span>
-          <select name="aspsp" required class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm">
+          <select name="aspsp" required class="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
             <option value="">— Choisir ({{ aspsps|length }} disponibles) —</option>
             {% for a in aspsps %}
               <option value="{{ a.name }}">{{ a.name }}{% if a.beta %} (bêta){% endif %}{% if a.maximum_consent_validity %} · accès {% widthratio a.maximum_consent_validity 86400 1 %} j{% endif %}</option>

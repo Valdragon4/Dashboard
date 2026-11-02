@@ -5,11 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{% block title %}Erreur{% endblock %} — Finance</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    {% include "_theme_head.html" %}
     <script>
-      if (localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark');
       tailwind.config = {
         darkMode: 'class',
-        theme: { extend: { colors: { primary: '#6366f1', 'primary-dark': '#4f46e5' } } }
+        theme: { extend: { colors: { primary: '#6366f1', 'primary-dark': '#4f46e5', 'primary-light': '#818cf8' } } }
       }
     </script>
   </head>

@@ -14,6 +14,15 @@ class AccountForm(forms.ModelForm):
             "portfolio_type": forms.Select(attrs={"class": "portfolio-type-field"}),
             "provider": forms.Select(attrs={"class": "provider-field"}),
         }
+        labels = {
+            "name": "Nom",
+            "type": "Type",
+            "portfolio_type": "Type de portefeuille",
+            "currency": "Devise",
+            "provider": "Établissement",
+            "iban": "IBAN",
+            "interest_rate_apy": "Taux d'intérêt annuel",
+        }
 
 
 class TransactionForm(forms.ModelForm):
