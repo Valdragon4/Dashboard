@@ -73,7 +73,7 @@ Intégration automatique quotidienne avec plusieurs banques (BoursoBank, Hello B
 
 ### Background Context
 
-Actuellement, l'utilisateur doit importer manuellement les données depuis chaque banque via CSV ou PDF. Le système dispose déjà d'un scraper Trade Republic fonctionnel avec authentification 2FA, mais il nécessite une intervention manuelle à chaque import. L'exploration de POWENS n'a pas été concluante, nécessitant une solution plus solide et maîtrisable.
+Actuellement, l'utilisateur doit importer manuellement les données depuis chaque banque via CSV ou PDF. Le système dispose déjà d'un scraper Trade Republic fonctionnel avec authentification 2FA, mais il nécessite une intervention manuelle à chaque import. L'exploration des agrégateurs bancaires tiers n'a pas été concluante, nécessitant une solution plus solide et maîtrisable.
 
 Cette amélioration permettra de transformer le dashboard en un véritable système de suivi financier automatique, similaire aux applications de gestion financière modernes, tout en conservant le contrôle sur les données et l'infrastructure.
 

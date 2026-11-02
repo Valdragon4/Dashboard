@@ -81,3 +81,6 @@ staticfiles/
 # Exports PDF (données, pas du code)
 pdf/
 
+# Relevés bancaires / crypto importés (données personnelles)
+*.csv
+!backend/finance/tests/**/*.csv

@@ -75,7 +75,7 @@ Intégration automatique quotidienne avec plusieurs banques (BoursoBank, Hello B
 
 #### Background Context
 
-Actuellement, l'utilisateur doit importer manuellement les données depuis chaque banque via CSV ou PDF. Le système dispose déjà d'un scraper Trade Republic fonctionnel avec authentification 2FA, mais il nécessite une intervention manuelle à chaque import. L'exploration de POWENS n'a pas été concluante, nécessitant une solution plus solide et maîtrisable.
+Actuellement, l'utilisateur doit importer manuellement les données depuis chaque banque via CSV ou PDF. Le système dispose déjà d'un scraper Trade Republic fonctionnel avec authentification 2FA, mais il nécessite une intervention manuelle à chaque import. L'exploration des agrégateurs bancaires tiers n'a pas été concluante, nécessitant une solution plus solide et maîtrisable.
 
 Cette amélioration permettra de transformer le dashboard en un véritable système de suivi financier automatique, similaire aux applications de gestion financière modernes, tout en conservant le contrôle sur les données et l'infrastructure.
 
@@ -159,10 +159,10 @@ Cette amélioration permettra de transformer le dashboard en un véritable syst�
 - **Statut** : ✅ Déjà implémenté pour Trade Republic (WebSocket + REST API)
 - **Recommandation** : Continuer cette approche pour Trade Republic, explorer pour BoursoBank/Hello Bank
 
-#### Option 2: APIs Agrégatrices Tierces (POWENS, BudgetBakers, Bridge API, etc.)
+#### Option 2: APIs Agrégatrices Tierces (BudgetBakers, Bridge API, etc.)
 - **Avantages** : Solution professionnelle, maintenance gérée par le fournisseur, conforme PSD2/DSP2
 - **Inconvénients** : Coût (abonnement mensuel), dépendance externe, données transitent par un tiers, pas toujours disponible pour toutes les banques françaises
-- **Statut** : ⚠️ Exploré (POWENS) mais non convaincant pour l'utilisateur
+- **Statut** : ⚠️ Exploré mais non convaincant pour l'utilisateur
 - **Recommandation** : Garder comme option de secours si le scraping direct échoue
 
 #### Option 3: Open Banking PSD2/DSP2 (APIs Officielles)

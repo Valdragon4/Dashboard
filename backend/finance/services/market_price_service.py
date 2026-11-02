@@ -106,6 +106,88 @@ class MarketPriceService:
             logger.debug("yahoo symbol resolution failed for %s: %s", isin, exc)
         return None
 
+    # ─── Crypto ───────────────────────────────────────────────────────────────
+    # Les cryptos n'ont pas d'ISIN exploitable côté Bitstack (contrairement aux
+    # pseudo-ISIN Trade Republic type XF000BTC0017), et yfinance n'est pas
+    # installé dans l'image. On interroge donc directement des sources cotées
+    # en euros, sans clé d'API.
+
+    _COINGECKO_IDS = {"BTC": "bitcoin", "ETH": "ethereum"}
+
+    def get_crypto_price_eur(self, symbol: str) -> Optional[Dict]:
+        """
+        Renvoie le prix spot en euros d'une crypto ('BTC', 'ETH').
+
+        Sources dans l'ordre : CoinGecko (sans clé), puis Yahoo Finance.
+        Renvoie None si aucune source ne répond — l'appelant doit alors
+        s'abstenir d'écrire une valorisation plutôt que d'en inventer une.
+        """
+        symbol = (symbol or "").strip().upper()
+        if not symbol:
+            return None
+        cache_key = f"crypto:{symbol}:EUR"
+        if cache_key in self._cache:
+            logger.info("Crypto price cache hit for %s", symbol)
+            return self._cache[cache_key]
+
+        result = self._get_crypto_from_coingecko(symbol) or self._get_crypto_from_yahoo(symbol)
+        if result:
+            self._cache[cache_key] = result
+            logger.info(
+                "Crypto price resolved symbol=%s source=%s price=%s EUR",
+                symbol,
+                result.get("source"),
+                result.get("price"),
+            )
+        else:
+            logger.error("Crypto price resolution failed for %s", symbol)
+        return result
+
+    def _get_crypto_from_coingecko(self, symbol: str) -> Optional[Dict]:
+        coin_id = self._COINGECKO_IDS.get(symbol)
+        if not coin_id:
+            return None
+        try:
+            response = requests.get(
+                "https://api.coingecko.com/api/v3/simple/price",
+                params={"ids": coin_id, "vs_currencies": "eur"},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            value = (response.json().get(coin_id) or {}).get("eur")
+            if value is None:
+                return None
+            return self._make_result(
+                price=Decimal(str(value)), source="coingecko", symbol=f"{symbol}-EUR"
+            )
+        except Exception as exc:
+            logger.warning("CoinGecko pricing failure for %s: %s", symbol, exc)
+        return None
+
+    def _get_crypto_from_yahoo(self, symbol: str) -> Optional[Dict]:
+        ticker = f"{symbol}-EUR"
+        try:
+            response = requests.get(
+                f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
+                params={"range": "1d", "interval": "1d"},
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=10.0,
+            )
+            response.raise_for_status()
+            results = (response.json().get("chart") or {}).get("result") or []
+            if not results:
+                return None
+            meta = results[0].get("meta") or {}
+            value = meta.get("regularMarketPrice")
+            if value is None:
+                return None
+            return self._make_result(
+                price=Decimal(str(value)), source="yahoo", symbol=ticker
+            )
+        except Exception as exc:
+            logger.warning("Yahoo crypto pricing failure for %s: %s", ticker, exc)
+        return None
+
     def _get_from_fallback_api(self, isin: str) -> Optional[Dict]:
         alpha_key = os.getenv("ALPHA_VANTAGE_API_KEY")
         polygon_key = os.getenv("POLYGON_API_KEY")

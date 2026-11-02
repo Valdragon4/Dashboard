@@ -10,10 +10,10 @@
 - **Statut** : ✅ Déjà implémenté pour Trade Republic (WebSocket + REST API)
 - **Recommandation** : Continuer cette approche pour Trade Republic, explorer pour BoursoBank/Hello Bank
 
-### Option 2: APIs Agrégatrices Tierces (POWENS, BudgetBakers, Bridge API, etc.)
+### Option 2: APIs Agrégatrices Tierces (BudgetBakers, Bridge API, etc.)
 - **Avantages** : Solution professionnelle, maintenance gérée par le fournisseur, conforme PSD2/DSP2
 - **Inconvénients** : Coût (abonnement mensuel), dépendance externe, données transitent par un tiers, pas toujours disponible pour toutes les banques françaises
-- **Statut** : ⚠️ Exploré (POWENS) mais non convaincant pour l'utilisateur
+- **Statut** : ⚠️ Exploré mais non convaincant pour l'utilisateur
 - **Recommandation** : Garder comme option de secours si le scraping direct échoue
 
 ### Option 3: Open Banking PSD2/DSP2 (APIs Officielles)

@@ -25,6 +25,7 @@ class Account(models.Model):
         TRADEREPUBLIC = "traderepublic", "Trade Republic"
         BOURSOBANK = "boursobank", "BoursoBank"
         HELLOBANK_LIVRET = "hellobank_livret", "Hello Bank (Livret)"
+        BITSTACK = "bitstack", "Bitstack"
 
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     name = models.CharField(max_length=120)
@@ -130,7 +131,6 @@ class BankConnection(models.Model):
     """
     Modèle pour stocker les connexions bancaires avec credentials chiffrés.
 
-    Ce modèle remplace l'ancien modèle BankConnection qui était utilisé pour POWENS.
     Les nouveaux champs permettent de stocker les credentials chiffrés et de gérer
     la synchronisation automatique.
     """
@@ -139,7 +139,6 @@ class BankConnection(models.Model):
         TRADE_REPUBLIC = "trade_republic", "Trade Republic"
         BOURSORAMA = "boursorama", "BoursoBank"
         HELLOBANK = "hellobank", "Hello Bank"
-        POWENS = "powens", "Powens (API)"
 
     class SyncStatus(models.TextChoices):
         PENDING = "pending", "En attente"

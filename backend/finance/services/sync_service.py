@@ -27,7 +27,6 @@ from finance.connectors.base import (
     RateLimitError,
 )
 from finance.connectors.traderepublic import TradeRepublicConnector
-from finance.connectors.powens import PowensConnector
 from finance.models import Account, BankConnection, SyncLog, Transaction
 from finance.services.encryption_service import EncryptionService, EncryptionError
 
@@ -102,13 +101,6 @@ class SyncService:
             if not PLAYWRIGHT_AVAILABLE or HelloBankConnector is None:
                 raise ImportError("Playwright non disponible pour HelloBank.")
             return HelloBankConnector()
-        elif provider == BankConnection.Provider.POWENS:
-            api_key = os.getenv("POWENS_API_KEY")
-            api_secret = os.getenv("POWENS_API_SECRET")
-            base_url = os.getenv("POWENS_BASE_URL", "https://api.powens.com")
-            if not api_key or not api_secret:
-                raise ValueError("POWENS_API_KEY et POWENS_API_SECRET requis.")
-            return PowensConnector(api_key=api_key, api_secret=api_secret, base_url=base_url)
         else:
             raise ValueError(f"Provider inconnu: {provider}")
 

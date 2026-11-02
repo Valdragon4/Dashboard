@@ -2611,13 +2611,27 @@ def api_investment_tri(request: HttpRequest) -> JsonResponse:
             return None, 0.0
         return snap, float(snap.total_with_cash or snap.positions_total or 0)
 
-    def _build_global_cash_flows(period_start, period_end):
-        inv_accounts = list(
+    def _tri_eligible_accounts():
+        """
+        Comptes dont les flux peuvent entrer dans le TRI.
+
+        Toute la valeur terminale du TRI provient des snapshots Trade Republic
+        (`_get_terminal_value_global`). Un compte courtier valorisé autrement —
+        Bitstack, valorisé au cours BTC/EUR — apporterait donc ses versements au
+        numérateur sans apporter sa valeur au dénominateur, ce qui écrase
+        mécaniquement le TRI. On restreint aux comptes effectivement couverts
+        par les snapshots.
+        """
+        return list(
             Account.objects.filter(
                 owner=request.user,
                 include_in_dashboard=True,
-            ).filter(Q(provider="traderepublic") | Q(type=Account.AccountType.BROKER))
+                provider="traderepublic",
+            )
         )
+
+    def _build_global_cash_flows(period_start, period_end):
+        inv_accounts = _tri_eligible_accounts()
 
         last_snap, terminal = _get_terminal_value_global(period_end)
         if terminal <= 0:
@@ -2875,13 +2889,12 @@ def api_investment_tri(request: HttpRequest) -> JsonResponse:
         by_type[ptype] = _fmt(compute_xirr(flows), _segment_days(flows))
 
     # --- TRI par compte broker ---
-    investment_accounts = Account.objects.filter(
-        owner=request.user,
-        include_in_dashboard=True,
-    ).filter(Q(provider="traderepublic") | Q(type=Account.AccountType.BROKER))
-
+    # Même restriction que pour le TRI global : sans snapshot Trade Republic,
+    # `_build_account_cash_flows` retomberait sur la valeur terminale GLOBALE,
+    # et afficherait donc la valorisation de tout le portefeuille TR comme
+    # valeur terminale d'un compte qui ne la contient pas.
     by_account: dict[str, dict] = {}
-    for account in investment_accounts:
+    for account in _tri_eligible_accounts():
         flows = _build_account_cash_flows(account, period_start, period_end)
         tri = compute_xirr(flows)
         by_account[str(account.id)] = {

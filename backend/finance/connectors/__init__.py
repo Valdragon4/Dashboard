@@ -14,7 +14,6 @@ from finance.connectors.base import (
     InvalidCredentialsError,
 )
 from finance.connectors.traderepublic import TradeRepublicConnector
-from finance.connectors.powens import PowensConnector
 
 # Import conditionnel de BoursoBankConnector et HelloBankConnector (nécessitent Playwright)
 try:
@@ -28,7 +27,6 @@ try:
         "ConnectionTimeoutError",
         "InvalidCredentialsError",
         "TradeRepublicConnector",
-        "PowensConnector",
         "BoursoBankConnector",
         "HelloBankConnector",
     ]

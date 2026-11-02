@@ -109,6 +109,13 @@ CELERY_BEAT_SCHEDULE = {
         "task": "finance.tasks.cleanup_old_sync_logs",
         "schedule": crontab(hour=1, minute=0),
     },
+    # Revalorise les comptes Bitstack au cours BTC/EUR tous les jours à 00h15
+    # (Bitstack n'a pas d'API : les transactions restent importées via
+    # `manage.py import_bitstack`, seule la valorisation est automatique)
+    "sync-bitstack-valuations-daily": {
+        "task": "finance.tasks.sync_bitstack_valuations",
+        "schedule": crontab(hour=0, minute=15),
+    },
     # Réconcilie les runs orphelins (STARTED figé après SIGKILL) toutes les 15 min
     "reconcile-stale-sync-logs": {
         "task": "finance.tasks.reconcile_stale_sync_logs",

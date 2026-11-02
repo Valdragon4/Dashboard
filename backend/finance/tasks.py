@@ -345,3 +345,29 @@ def cleanup_old_sync_logs() -> Dict:
         "retention_days": retention_days,
         "cutoff_date": cutoff_date.isoformat(),
     }
+
+
+@shared_task
+def sync_bitstack_valuations() -> Dict:
+    """
+    Revalorise chaque compte Bitstack au cours BTC/EUR spot.
+
+    Bitstack n'ayant pas d'API, les transactions restent importées à la main
+    depuis le relevé CSV — seule la valorisation de la position est automatique.
+    """
+    from finance.services import bitstack_import
+
+    accounts = Account.objects.filter(provider=Account.Provider.BITSTACK)
+    valued, skipped = 0, 0
+    for account in accounts:
+        try:
+            snapshot = bitstack_import.sync_valuation(account)
+        except Exception as exc:  # pragma: no cover - garde-fou tâche périodique
+            logger.warning("bitstack_valuation account=%s failed: %s", account.id, exc)
+            skipped += 1
+            continue
+        if snapshot is None:
+            skipped += 1
+        else:
+            valued += 1
+    return {"valued": valued, "skipped": skipped}
