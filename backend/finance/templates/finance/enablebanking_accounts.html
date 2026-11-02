@@ -48,6 +48,14 @@
                 {% endfor %}
               </select>
             </label>
+            <label class="block mt-3 text-sm">
+              <span class="text-gray-700 dark:text-gray-300">Nom dans le tableau de bord</span>
+              <input type="text" name="name_{{ link.id }}" maxlength="120"
+                     value="{% if link.account %}{{ link.account.name }}{% endif %}"
+                     placeholder="{% for k, v in suggested_names.items %}{% if k == link.id %}{{ v }}{% endif %}{% endfor %}"
+                     class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm">
+              <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">Vide : nom actuel conservé (ou nom proposé pour un nouveau compte).</span>
+            </label>
           </div>
         {% endfor %}
       </div>

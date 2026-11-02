@@ -264,3 +264,32 @@ class ViewsTests(TestCase):
         resp = self.client.get(reverse("bank_connections_list"))
         self.assertContains(resp, "Renouveler l")
         self.assertContains(resp, "30/04/2027")
+
+
+class RenameTests(TestCase):
+    def setUp(self):
+        _with_encryption_key(self)
+        self.user = User.objects.create_user(username="u", password="p")
+        self.client.force_login(self.user)
+        two = {
+            **SESSION,
+            "accounts": [
+                SESSION["accounts"][0],
+                {**SESSION["accounts"][0], "uid": "uid-2", "identification_hash": "h2", "currency": "GBP"},
+            ],
+        }
+        self.connection = store_session(self.user, {**CTX, "aspsp": "Revolut"}, two)
+        self.links = list(BankAccountLink.objects.filter(connection=self.connection).order_by("currency"))
+
+    def test_noms_proposes_distincts_et_renommage(self):
+        url = reverse("enablebanking_accounts", args=[self.connection.id])
+        eur, gbp = self.links
+        self.client.post(url, {f"link_{eur.id}": "new", f"link_{gbp.id}": "new", f"name_{gbp.id}": ""})
+        names = set(Account.objects.filter(owner=self.user).values_list("name", flat=True))
+        self.assertEqual(names, {"Revolut EUR …4997", "Revolut GBP …4997"})
+
+        eur.refresh_from_db()
+        self.client.post(url, {f"link_{eur.id}": str(eur.account_id), f"name_{eur.id}": "Revolut perso",
+                               f"link_{gbp.id}": str(Account.objects.get(name="Revolut GBP …4997").id)})
+        self.assertTrue(Account.objects.filter(owner=self.user, name="Revolut perso").exists())
+        self.assertTrue(Account.objects.filter(owner=self.user, name="Revolut GBP …4997").exists())

@@ -38,6 +38,17 @@ PSU_TYPES = [("personal", "Particulier"), ("business", "Professionnel")]
 CASH_ACCOUNT_TYPES = {"CACC": Account.AccountType.CHECKING, "SVGS": Account.AccountType.SAVINGS, "CARD": Account.AccountType.CREDIT}
 
 
+def suggested_account_name(connection: BankConnection, link: BankAccountLink) -> str:
+    """Nom distinctif : les banques renvoient souvent le titulaire pour tous les comptes."""
+    parts = [connection.account_name]
+    if link.currency:
+        parts.append(link.currency)
+    last4 = (link.raw or {}).get("iban_last4")
+    if last4:
+        parts.append(f"…{last4}")
+    return " ".join(parts)[:120]
+
+
 def connection_credentials(connection: BankConnection) -> dict:
     try:
         return EncryptionService.decrypt_credentials(connection.encrypted_credentials) or {}
@@ -260,7 +271,7 @@ def enablebanking_accounts(request: HttpRequest, connection_id: int) -> HttpResp
                 if choice == "new":
                     account = Account.objects.create(
                         owner=request.user,
-                        name=f"{connection.account_name} — {link.name}"[:120],
+                        name=suggested_account_name(connection, link),
                         type=CASH_ACCOUNT_TYPES.get(link.type, Account.AccountType.CHECKING),
                         currency=link.currency or "EUR",
                     )
@@ -276,7 +287,12 @@ def enablebanking_accounts(request: HttpRequest, connection_id: int) -> HttpResp
                     chosen_ids.add(account.id)
                     account.bank_connection = connection
                     account.auto_sync_enabled = True
-                    account.save(update_fields=["bank_connection", "auto_sync_enabled"])
+                    fields = ["bank_connection", "auto_sync_enabled"]
+                    new_name = (request.POST.get(f"name_{link.id}") or "").strip()[:120]
+                    if new_name and new_name != account.name:
+                        account.name = new_name
+                        fields.append("name")
+                    account.save(update_fields=fields)
                     to_sync.append(account.id)
             # Comptes qui pointaient vers cette connexion mais ne sont plus choisis.
             Account.objects.filter(bank_connection=connection).exclude(id__in=chosen_ids).update(
@@ -301,5 +317,6 @@ def enablebanking_accounts(request: HttpRequest, connection_id: int) -> HttpResp
             "links": links,
             "user_accounts": user_accounts,
             "consent": consent_status(connection),
+            "suggested_names": {link.id: suggested_account_name(connection, link) for link in links},
         },
     )
