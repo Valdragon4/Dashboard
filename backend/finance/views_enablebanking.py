@@ -123,7 +123,9 @@ def enablebanking_connect(request: HttpRequest) -> HttpResponse:
     aspsps, error = [], None
     try:
         aspsps = sorted(
-            (a for a in EnableBankingClient().list_aspsps(country, psu_type) if not a.get("beta")),
+            # Les banques « beta » (85 sur 116 en France, dont Trade Republic) restent
+            # proposées : elles fonctionnent, Enable Banking les signale seulement.
+            EnableBankingClient().list_aspsps(country, psu_type),
             key=lambda a: a.get("name", "").lower(),
         )
     except EnableBankingError as e:

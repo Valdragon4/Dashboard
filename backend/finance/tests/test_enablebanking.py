@@ -293,3 +293,19 @@ class RenameTests(TestCase):
                                f"link_{gbp.id}": str(Account.objects.get(name="Revolut GBP …4997").id)})
         self.assertTrue(Account.objects.filter(owner=self.user, name="Revolut perso").exists())
         self.assertTrue(Account.objects.filter(owner=self.user, name="Revolut GBP …4997").exists())
+
+
+class ConnectListTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username="u", password="p")
+        self.client.force_login(self.user)
+
+    @patch("finance.views_enablebanking.EnableBankingClient")
+    def test_banques_beta_proposees(self, client_cls):
+        client_cls.return_value.list_aspsps.return_value = [
+            {"name": "Trade Republic", "beta": True, "maximum_consent_validity": 7776000},
+            {"name": "Hello Bank", "beta": False},
+        ]
+        resp = self.client.get(reverse("enablebanking_connect"))
+        self.assertContains(resp, "Trade Republic (bêta)")
+        self.assertContains(resp, "Hello Bank")

@@ -50,7 +50,7 @@
           <select name="aspsp" required class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white text-sm">
             <option value="">— Choisir ({{ aspsps|length }} disponibles) —</option>
             {% for a in aspsps %}
-              <option value="{{ a.name }}">{{ a.name }}{% if a.maximum_consent_validity %} · accès {% widthratio a.maximum_consent_validity 86400 1 %} j{% endif %}</option>
+              <option value="{{ a.name }}">{{ a.name }}{% if a.beta %} (bêta){% endif %}{% if a.maximum_consent_validity %} · accès {% widthratio a.maximum_consent_validity 86400 1 %} j{% endif %}</option>
             {% endfor %}
           </select>
         </label>
