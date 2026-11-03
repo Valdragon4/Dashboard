@@ -1,5 +1,5 @@
 {% extends 'base.html' %}
-{% load finance_filters %}
+{% load finance_filters l10n %}
 {% block title %}Transactions{% endblock %}
 {% block content %}
   <div class="page-entete">
@@ -36,7 +36,7 @@
             <th class="droite">Montant</th>
             <th class="droite hidden lg:table-cell">Solde après</th>
             <th class="hidden xl:table-cell">Catégorie</th>
-            <th class="droite"><span class="sr-only">Actions</span></th>
+            <th class="droite hidden md:table-cell"><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
@@ -49,29 +49,31 @@
               data-provider="{{ item.transaction.account.provider|default:'manuel' }}"
               data-description="{{ item.transaction.description }}"
               data-counterparty="{{ item.transaction.counterparty }}"
-              data-amount="{{ item.transaction.amount }}"
+              data-amount="{{ item.transaction.amount|unlocalize }}"
               data-currency="{{ item.transaction.currency }}"
-              data-balance="{{ item.balance_after }}"
+              data-balance="{{ item.balance_after|unlocalize }}"
               data-category="{{ item.transaction.category.name|default:'' }}"
               data-category-id="{{ item.transaction.category.id|default:'' }}"
               data-is-transfer="{{ item.transaction.is_transfer }}">
             <td class="whitespace-nowrap">
-              <p class="num text-ink">{{ item.transaction.posted_at|date:'d/m/Y' }}</p>
+              <p class="num text-ink md:hidden">{{ item.transaction.posted_at|date:'d/m' }}</p>
+              <p class="num text-ink hidden md:block">{{ item.transaction.posted_at|date:'d/m/Y' }}</p>
               <p class="secondaire num hidden md:block">{{ item.transaction.posted_at|date:'H:i' }}</p>
             </td>
             <td class="hidden md:table-cell"><p class="truncate max-w-[10rem]">{{ item.transaction.account.name }}</p></td>
             <td class="hidden lg:table-cell"><span class="etiquette">{{ item.transaction.account.provider|default:'manuel' }}</span></td>
-            <td>
-              <p class="principal truncate max-w-[11rem] md:max-w-[20rem]">{{ item.transaction.description }}</p>
-              {% if item.transaction.counterparty %}<p class="secondaire truncate max-w-[11rem] md:max-w-[20rem]">{{ item.transaction.counterparty }}</p>{% endif %}
+            <td class="w-full max-w-0 md:w-auto md:max-w-none">
+              <p class="principal truncate md:max-w-[20rem]">{{ item.transaction.description }}</p>
+              <p class="secondaire truncate md:hidden"><span class="tx-categorie-mobile">{{ item.transaction.category.name|default:'Sans catégorie' }}</span> · {{ item.transaction.account.name }}</p>
+              {% if item.transaction.counterparty %}<p class="secondaire truncate max-w-[20rem] hidden md:block">{{ item.transaction.counterparty }}</p>{% endif %}
             </td>
             <td class="droite num text-ink whitespace-nowrap{% if item.transaction.amount > 0 %} font-medium{% endif %}">{% if item.transaction.amount > 0 %}+{% endif %}{{ item.transaction.amount|format_amount_6digits }} €</td>
             <td class="droite num hidden lg:table-cell whitespace-nowrap">{{ item.balance_after|format_amount_6digits }} €</td>
             <td class="hidden xl:table-cell">
               {% if item.transaction.category %}<span class="etiquette max-w-[9rem] truncate">{{ item.transaction.category.name }}</span>{% else %}<span class="text-ink-3">—</span>{% endif %}
             </td>
-            <td class="droite" onclick="event.stopPropagation();">
-              <form method="post" action="{% url 'transaction_delete' item.transaction.id %}" onsubmit="return confirm('Êtes-vous sûr de vouloir supprimer cette transaction ? Cette action est irréversible.');" class="inline">
+            <td class="droite hidden md:table-cell" onclick="event.stopPropagation();">
+              <form method="post" action="{% url 'transaction_delete' item.transaction.id %}" data-suppression="{{ item.transaction.id }}" onsubmit="return confirm('Êtes-vous sûr de vouloir supprimer cette transaction ? Cette action est irréversible.');" class="inline">
                 {% csrf_token %}
                 {% if request.GET.page %}<input type="hidden" name="page" value="{{ request.GET.page }}">{% endif %}
                 {% if request.GET.account %}<input type="hidden" name="account" value="{{ request.GET.account }}">{% endif %}
@@ -165,6 +167,10 @@
           <p class="champ-aide" id="category-aide">La catégorie est sauvegardée automatiquement.</p>
         </div>
 
+        <div class="flex justify-end md:hidden">
+          <button type="button" class="btn btn-danger btn-petit" onclick="supprimerDepuisModale()">Supprimer la transaction</button>
+        </div>
+
         <div id="modal-transfer-badge" class="hidden">
           <div class="message message-info">
             {% include "graphite/icone.html" with nom="info" only %}
@@ -208,6 +214,12 @@
         document.getElementById('category-select').focus();
       });
     });
+
+    // Sous 768 px : envoie le formulaire de suppression de la ligne (même confirmation).
+    function supprimerDepuisModale() {
+      const form = document.querySelector(`form[data-suppression="${currentTransactionId}"]`);
+      if (form) form.requestSubmit();
+    }
 
     function closeModal() {
       document.getElementById('transactionModal').classList.add('hidden');
@@ -276,6 +288,8 @@
             // Colonne « Catégorie » (avant-dernière) : reconstruite sans innerHTML.
             const categoryCell = row.querySelector('td:nth-last-child(2)');
             if (categoryCell) {
+              const mobile = row.querySelector('.tx-categorie-mobile');
+              if (mobile) mobile.textContent = data.category_name || 'Sans catégorie';
               if (data.category_name && data.category_name !== 'Sans catégorie') {
                 categoryCell.replaceChildren(Finance.el('span', 'etiquette max-w-[9rem] truncate', data.category_name));
               } else {

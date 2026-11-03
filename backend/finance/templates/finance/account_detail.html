@@ -72,25 +72,28 @@
         <table class="tableau">
           <thead>
             <tr>
-              <th>Symbole</th>
+              <th class="hidden md:table-cell">Symbole</th>
               <th>Nom</th>
               <th class="hidden md:table-cell">Type</th>
               <th class="droite hidden md:table-cell">Quantité</th>
               <th class="droite hidden lg:table-cell">Prix unitaire</th>
               <th class="droite">Valeur</th>
-              <th class="droite hidden sm:table-cell">Part</th>
+              <th class="droite hidden md:table-cell">Part</th>
             </tr>
           </thead>
           <tbody>
             {% for holding in holdings %}
             <tr>
-              <td><span class="font-mono text-sm font-semibold text-ink">{{ holding.symbol }}</span></td>
-              <td><p class="principal max-w-md truncate">{{ holding.name }}</p></td>
+              <td class="hidden md:table-cell"><span class="font-mono text-sm font-semibold text-ink">{{ holding.symbol }}</span></td>
+              <td class="w-full max-w-0 md:w-auto md:max-w-none">
+                <p class="principal truncate md:max-w-md">{{ holding.name }}</p>
+                <p class="secondaire truncate md:hidden"><span class="font-mono">{{ holding.symbol }}</span> · {{ holding.instrument_type|upper }} · <span class="num">{% widthratio holding.total_value portfolio_totals|get_item:portfolio_type 100 %} %</span></p>
+              </td>
               <td class="hidden md:table-cell"><span class="etiquette">{{ holding.instrument_type|upper }}</span></td>
               <td class="droite num hidden md:table-cell">{{ holding.quantity|floatformat:4 }}</td>
               <td class="droite num hidden lg:table-cell">{{ holding.unit_price|floatformat:2 }} €</td>
               <td class="droite num text-ink font-medium">{{ holding.total_value|floatformat:2 }} €</td>
-              <td class="droite num hidden sm:table-cell">{% widthratio holding.total_value portfolio_totals|get_item:portfolio_type 100 %} %</td>
+              <td class="droite num hidden md:table-cell">{% widthratio holding.total_value portfolio_totals|get_item:portfolio_type 100 %} %</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -141,19 +144,22 @@
               <th>Date</th>
               <th>Description</th>
               <th class="droite">Montant</th>
-              <th class="hidden sm:table-cell">Type</th>
-              <th class="droite">Actions</th>
+              <th class="hidden md:table-cell">Type</th>
+              <th class="droite hidden md:table-cell">Actions</th>
             </tr>
           </thead>
           <tbody>
             {% for transaction in transactions %}
             <tr>
-              <td class="num whitespace-nowrap">{{ transaction.posted_at|date:"d/m/Y H:i" }}</td>
-              <td><p class="principal max-w-md">{{ transaction.description }}</p></td>
+              <td class="num whitespace-nowrap"><span class="md:hidden">{{ transaction.posted_at|date:"d/m/y" }}</span><span class="hidden md:inline">{{ transaction.posted_at|date:"d/m/Y H:i" }}</span></td>
+              <td class="w-full max-w-0 md:w-auto md:max-w-none">
+                <p class="principal truncate md:whitespace-normal md:max-w-md">{{ transaction.description }}</p>
+                <p class="secondaire md:hidden">{% if transaction.amount > 0 %}Dépôt{% else %}Achat{% endif %} · <button type="submit" form="suppr-op-{{ transaction.id }}" class="lien">Supprimer</button></p>
+              </td>
               <td class="droite num text-ink whitespace-nowrap{% if transaction.amount > 0 %} font-medium{% endif %}">{% if transaction.amount > 0 %}+{% endif %}{{ transaction.amount|floatformat:2 }} €</td>
-              <td class="hidden sm:table-cell"><span class="etiquette">{% if transaction.amount > 0 %}Dépôt{% else %}Achat{% endif %}</span></td>
-              <td class="droite">
-                <form method="post" action="{% url 'transaction_delete' transaction.id %}" onsubmit="return confirm('Supprimer cette transaction ?');" class="inline">
+              <td class="hidden md:table-cell"><span class="etiquette">{% if transaction.amount > 0 %}Dépôt{% else %}Achat{% endif %}</span></td>
+              <td class="droite hidden md:table-cell">
+                <form method="post" action="{% url 'transaction_delete' transaction.id %}" id="suppr-op-{{ transaction.id }}" onsubmit="return confirm('Supprimer cette transaction ?');" class="inline">
                   {% csrf_token %}
                   <input type="hidden" name="return_to" value="account_detail">
                   <input type="hidden" name="account_id" value="{{ account.id }}">
