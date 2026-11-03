@@ -1,0 +1,5 @@
+{# Indicateur. libelle, valeur, ecart (option), ecart_icone (option), vedette (bool : une fois par page au plus). #}<div class="carte carte-corps{% if vedette %} carte-vedette{% endif %}">
+  <p class="kpi-libelle">{{ libelle }}</p>
+  <p class="kpi-valeur">{{ valeur }}</p>
+  {% if ecart %}<p class="kpi-ecart">{% if ecart_icone %}{% include "graphite/icone.html" with nom=ecart_icone only %}{% endif %}{{ ecart }}</p>{% endif %}
+</div>

@@ -6,7 +6,24 @@ from .models import Account, Transaction, BankConnection
 from .services.encryption_service import EncryptionService
 
 
-class AccountForm(forms.ModelForm):
+class ChampsGraphite:
+    """Ajoute la classe « champ » (charte Graphite) aux widgets de saisie.
+
+    Les cases à cocher gardent leur rendu natif (couleur d'accent via base.css).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in self.fields.values():
+            widget = field.widget
+            if isinstance(widget, (forms.CheckboxInput, forms.CheckboxSelectMultiple, forms.RadioSelect)):
+                continue
+            classes = widget.attrs.get("class", "").split()
+            if "champ" not in classes:
+                widget.attrs["class"] = " ".join(["champ", *classes])
+
+
+class AccountForm(ChampsGraphite, forms.ModelForm):
     class Meta:
         model = Account
         fields = ["name", "type", "portfolio_type", "currency", "provider", "iban", "interest_rate_apy"]
@@ -25,7 +42,7 @@ class AccountForm(forms.ModelForm):
         }
 
 
-class TransactionForm(forms.ModelForm):
+class TransactionForm(ChampsGraphite, forms.ModelForm):
     class Meta:
         model = Transaction
         fields = ["account", "posted_at", "amount", "currency", "description", "counterparty", "category"]
@@ -34,7 +51,7 @@ class TransactionForm(forms.ModelForm):
         }
 
 
-class BankConnectionForm(forms.ModelForm):
+class BankConnectionForm(ChampsGraphite, forms.ModelForm):
     """
     Formulaire pour créer/modifier une connexion bancaire.
 

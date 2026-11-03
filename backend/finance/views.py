@@ -769,12 +769,12 @@ def dashboard(request: HttpRequest) -> HttpResponse:
     }
     
     # Revenus: Catégories → "Revenus totaux"
-    # On préfixe avec "💰 " pour éviter les cycles avec les dépenses
+    # On préfixe avec "Entrée : " pour éviter les cycles avec les dépenses (préfixe masqué à l'affichage)
     for item in income_by_category:
         category_name = item["category__name"] or "Sans catégorie"
         value = float(item["total"])
         sankey_data.append({
-            "source": f"💰 {category_name}",
+            "source": f"Entrée : {category_name}",
             "target": "Revenus",
             "value": value,
         })
@@ -809,13 +809,13 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         })
     
     # Dépenses: "Revenus totaux" → Catégories de dépenses
-    # On préfixe avec "💸 " pour éviter les cycles avec les revenus
+    # On préfixe avec "Sortie : " pour éviter les cycles avec les revenus (préfixe masqué à l'affichage)
     for item in expenses_by_category:
         category_name = item["category__name"] or "Sans catégorie"
         value = abs(float(item["total"]))
         sankey_data.append({
             "source": "Revenus",
-            "target": f"💸 {category_name}",
+            "target": f"Sortie : {category_name}",
             "value": value,
         })
         
@@ -1405,7 +1405,7 @@ def delete_all_investment_transactions(request: HttpRequest, account_id: int) ->
         amount=Decimal("0")
     ).delete()[0]
     
-    messages.success(request, f"✅ {deleted_count} opération(s) d'investissement supprimée(s).")
+    messages.success(request, f"{deleted_count} opération(s) d'investissement supprimée(s).")
     return redirect("account_detail", account_id=account_id)
 
 

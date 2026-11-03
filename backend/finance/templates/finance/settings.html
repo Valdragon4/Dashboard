@@ -1,208 +1,166 @@
 {% extends 'base.html' %}
 {% block title %}Paramètres{% endblock %}
 {% block content %}
-  <div class="mb-8">
-    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-      <div>
-        <h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">Paramètres</h1>
-        <p class="text-gray-600 dark:text-gray-400">Préférences de l'application et navigation rapide</p>
-      </div>
+  <div class="page-entete">
+    <div>
+      <h1 class="page-titre">Paramètres</h1>
+      <p class="page-sous-titre">Préférences de l'application : solde courant, livrets, sous-comptes et affichage.</p>
     </div>
   </div>
 
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-8">
-    <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-2">Synchronisation automatique</h2>
-    <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-      La synchronisation des comptes est centralisée dans le panel Connexions Bancaires.
-    </p>
-    <a
-      href="{% url 'bank_connections_list' %}"
-      class="inline-flex items-center px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors shadow-sm"
-    >
-      Ouvrir Connexions Bancaires
-    </a>
-  </div>
-
-  {% if checking_accounts %}
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-8">
-    <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-2">Solde courant</h2>
-    <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-      Comptes courants additionnés dans la carte « Solde courant » du tableau de bord.
-      Un compte décoché reste compté dans le patrimoine total.
-    </p>
-    <form method="post">
-      {% csrf_token %}
-      <input type="hidden" name="form" value="current_balance">
-      <div class="space-y-2">
-        {% for account in checking_accounts %}
-        <label class="flex items-center justify-between gap-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600 cursor-pointer">
-          <span class="flex items-center gap-3 min-w-0">
-            <input type="checkbox" name="current_balance_accounts" value="{{ account.id }}"
-                   {% if account.include_in_current_balance %}checked{% endif %}
-                   class="rounded border-gray-300 dark:border-gray-600 text-primary dark:text-primary-light focus:ring-primary">
-            <span class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ account.name }}</span>
-          </span>
-          <span class="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
-            {% if account.currency != 'EUR' %}{{ account.currency }} · {% endif %}{% if not account.include_in_dashboard %}masqué du tableau de bord{% elif account.bank_connection_id %}synchronisé{% else %}manuel{% endif %}
-          </span>
-        </label>
-        {% endfor %}
+  <div class="flex flex-col gap-6 max-w-4xl">
+    <section class="carte" aria-labelledby="t-sync">
+      <div class="carte-entete"><h2 class="carte-titre" id="t-sync">Synchronisation automatique</h2></div>
+      <div class="carte-corps flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <p class="text-sm text-ink-2">La synchronisation des comptes est centralisée dans le panel Connexions Bancaires.</p>
+        <a href="{% url 'bank_connections_list' %}" class="btn btn-secondaire shrink-0">{% include "graphite/icone.html" with nom="chaine" only %}Ouvrir Connexions Bancaires</a>
       </div>
-      <button type="submit" class="mt-4 px-6 py-2 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark transition-colors shadow-sm">
-        Enregistrer
-      </button>
-    </form>
-  </div>
-  {% endif %}
+    </section>
 
-  {% if savings_rows %}
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-8">
-    <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-2">Livrets réglementés</h2>
-    <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-      La banque n'expose pas les livrets : leur solde suit les virements du compte courant synchronisé
-      (« VIREMENT VERS LEP / LIVRET A »), et les intérêts sont calculés par quinzaines au taux officiel,
-      relevé chaque semaine sur service-public.gouv.fr, puis crédités au 31 décembre.
-      Saisissez le solde réel de temps en temps pour recaler.
-    </p>
-    <form method="post">
-      {% csrf_token %}
-      <input type="hidden" name="form" value="savings">
-      <div class="space-y-3">
-        {% for row in savings_rows %}
-        <div class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600">
-          <div class="flex flex-wrap items-baseline justify-between gap-2">
-            <span class="text-sm font-medium text-gray-900 dark:text-white">{{ row.account.name }}</span>
-            <span class="text-sm text-gray-700 dark:text-gray-300">{{ row.balance|floatformat:2 }} €
-              {% if row.account.balance_snapshot_date %}<span class="text-xs text-gray-500 dark:text-gray-400">· recalé le {{ row.account.balance_snapshot_date|date:"d/m/Y" }}</span>{% endif %}
-            </span>
-          </div>
-          {% if row.account.savings_product %}
-          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Taux actuel : {% if row.rate is not None %}{{ row.rate|floatformat:2 }} %{% else %}inconnu{% endif %}
-            · intérêts {% now "Y" %} courus (estimation) : {{ row.interest.amount|floatformat:2 }} €
-            {% if row.interest.missing_rates %}<span class="text-amber-700 dark:text-amber-400">— taux manquants</span>{% endif %}
-          </p>
-          {% endif %}
-          <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <label class="text-xs text-gray-600 dark:text-gray-400">Type de livret
-              <select name="product_{{ row.account.id }}" class="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-                <option value="">— Aucun (compte manuel) —</option>
-                {% for value, label in savings_products %}<option value="{{ value }}" {% if row.account.savings_product == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
-              </select>
-            </label>
-            <label class="text-xs text-gray-600 dark:text-gray-400">Solde réel aujourd'hui (optionnel)
-              <input type="text" inputmode="decimal" name="balance_{{ row.account.id }}" placeholder="ex. 1037,02"
-                     class="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-            </label>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-      <button type="submit" class="mt-4 px-6 py-2 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark transition-colors shadow-sm">Enregistrer</button>
-    </form>
-
-    {% if pending_withdrawals %}
-    <h3 class="mt-6 mb-2 text-base font-semibold text-gray-900 dark:text-white">Retraits à affecter</h3>
-    <p class="text-xs text-gray-500 dark:text-gray-400 mb-3">
-      La banque ne dit pas de quel livret vient un retrait. Astuce : écrivez « LEP » ou « LIVRET A » dans le motif du virement, il sera affecté tout seul.
-    </p>
-    <div class="space-y-2">
-      {% for tx in pending_withdrawals %}
-      <form method="post" class="flex flex-wrap items-center gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+    {% if checking_accounts %}
+    <section class="carte" aria-labelledby="t-solde">
+      <div class="carte-entete"><h2 class="carte-titre" id="t-solde">Solde courant</h2></div>
+      <form method="post" class="carte-corps">
         {% csrf_token %}
-        <input type="hidden" name="form" value="savings_assign">
-        <input type="hidden" name="tx_id" value="{{ tx.id }}">
-        <span class="text-sm text-gray-900 dark:text-white flex-1 min-w-[10rem]">{{ tx.posted_at|date:"d/m/Y" }} · +{{ tx.amount|floatformat:2 }} € <span class="text-xs text-gray-500 dark:text-gray-400">({{ tx.account.name }})</span></span>
-        {% for a in livret_accounts %}
-        <button name="target" value="{{ a.id }}" class="px-3 py-1 text-xs font-medium text-primary dark:text-primary-light border border-primary/40 rounded-lg hover:bg-primary hover:text-white">Depuis {{ a.get_savings_product_display }}</button>
-        {% endfor %}
-        <button name="target" value="none" class="px-3 py-1 text-xs text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700">Pas un livret</button>
+        <input type="hidden" name="form" value="current_balance">
+        <p class="text-sm text-ink-2 mb-4">
+          Comptes courants additionnés dans la carte « Solde courant » du tableau de bord.
+          Un compte décoché reste compté dans le patrimoine total.
+        </p>
+        <ul class="tableau-cadre divide-y divide-line">
+          {% for account in checking_accounts %}
+          <li>
+            <label class="flex items-center justify-between gap-4 px-4 py-2.5 cursor-pointer hover:bg-sunken">
+              <span class="flex items-center gap-3 min-w-0">
+                <input type="checkbox" name="current_balance_accounts" value="{{ account.id }}" class="w-4 h-4 shrink-0" {% if account.include_in_current_balance %}checked{% endif %}>
+                <span class="text-sm font-medium text-ink truncate">{{ account.name }}</span>
+              </span>
+              <span class="text-xs text-ink-3 shrink-0">{% if account.currency != 'EUR' %}{{ account.currency }} · {% endif %}{% if not account.include_in_dashboard %}masqué du tableau de bord{% elif account.bank_connection_id %}synchronisé{% else %}manuel{% endif %}</span>
+            </label>
+          </li>
+          {% endfor %}
+        </ul>
+        <button type="submit" class="btn btn-principal mt-4">Enregistrer</button>
       </form>
-      {% endfor %}
-    </div>
+    </section>
     {% endif %}
-  </div>
-  {% endif %}
 
-  {% if tr_subaccounts %}
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-8">
-    <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-2">Sous-comptes Trade Republic</h2>
-    <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-      Indiquez le type fiscal de chaque sous-compte détecté lors de la synchronisation
-      (PEA, CTO, PEA-PME, Crypto). Tant qu'un sous-compte n'est pas classé, il est
-      compté par défaut en CTO.
-    </p>
-    <form method="post">
-      {% csrf_token %}
-      <div class="space-y-3">
-        {% for mapping in tr_subaccounts %}
-        <div class="flex items-center justify-between gap-4 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700">
-          <div>
-            <span class="font-mono text-sm text-gray-900 dark:text-white">{{ mapping.external_account_id }}</span>
-            {% if not mapping.portfolio_type %}
-            <span class="ml-2 text-xs font-medium text-amber-700 dark:text-amber-300 bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 rounded-full">À classer</span>
-            {% endif %}
-          </div>
-          <select name="portfolio_type_{{ mapping.id }}" class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-            <option value="">Non classé</option>
-            {% for value, label in tr_portfolio_types %}
-            <option value="{{ value }}" {% if mapping.portfolio_type == value %}selected{% endif %}>{{ label }}</option>
+    {% if savings_rows %}
+    <section class="carte" aria-labelledby="t-livrets">
+      <div class="carte-entete"><h2 class="carte-titre" id="t-livrets">Livrets réglementés</h2></div>
+      <div class="carte-corps">
+        <p class="text-sm text-ink-2 mb-4">
+          La banque n'expose pas les livrets : leur solde suit les virements du compte courant synchronisé
+          (« VIREMENT VERS LEP / LIVRET A »), et les intérêts sont calculés par quinzaines au taux officiel,
+          relevé chaque semaine sur service-public.gouv.fr, puis crédités au 31 décembre.
+          Saisissez le solde réel de temps en temps pour recaler.
+        </p>
+        <form method="post">
+          {% csrf_token %}
+          <input type="hidden" name="form" value="savings">
+          <div class="flex flex-col gap-3">
+            {% for row in savings_rows %}
+            <div class="rounded-card border border-line bg-sunken p-3 sm:p-4">
+              <div class="flex flex-wrap items-baseline justify-between gap-2">
+                <span class="text-sm font-medium text-ink">{{ row.account.name }}</span>
+                <span class="text-sm text-ink"><span class="num font-semibold">{{ row.balance|floatformat:2 }} €</span>
+                  {% if row.account.balance_snapshot_date %}<span class="text-xs text-ink-3"> · recalé le <span class="num">{{ row.account.balance_snapshot_date|date:"d/m/Y" }}</span></span>{% endif %}
+                </span>
+              </div>
+              {% if row.account.savings_product %}
+              <p class="mt-1 text-xs text-ink-3">
+                Taux actuel : {% if row.rate is not None %}<span class="num">{{ row.rate|floatformat:2 }} %</span>{% else %}inconnu{% endif %}
+                · intérêts {% now "Y" %} courus (estimation) : <span class="num">{{ row.interest.amount|floatformat:2 }} €</span>
+                {% if row.interest.missing_rates %}<span class="etat etat-warn ml-1">Taux manquants</span>{% endif %}
+              </p>
+              {% endif %}
+              <div class="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label class="champ-libelle" for="product_{{ row.account.id }}">Type de livret</label>
+                  <select class="champ" id="product_{{ row.account.id }}" name="product_{{ row.account.id }}">
+                    <option value="">— Aucun (compte manuel) —</option>
+                    {% for value, label in savings_products %}<option value="{{ value }}" {% if row.account.savings_product == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+                  </select>
+                </div>
+                <div>
+                  <label class="champ-libelle" for="balance_{{ row.account.id }}">Solde réel aujourd'hui (optionnel)</label>
+                  <input class="champ num" type="text" inputmode="decimal" id="balance_{{ row.account.id }}" name="balance_{{ row.account.id }}" placeholder="ex. 1037,02">
+                </div>
+              </div>
+            </div>
             {% endfor %}
-          </select>
-        </div>
-        {% endfor %}
-      </div>
-      <button type="submit" class="mt-4 px-6 py-2 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark transition-colors shadow-sm">
-        Enregistrer
-      </button>
-    </form>
-  </div>
-  {% endif %}
+          </div>
+          <button type="submit" class="btn btn-principal mt-4">Enregistrer</button>
+        </form>
 
-  <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-4">Préférences d'affichage</h3>
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6">
-    <div class="flex items-center justify-between">
-      <div class="flex items-center gap-3">
-        <div class="w-12 h-12 bg-gray-100 dark:bg-gray-700 rounded-xl flex items-center justify-center">
-          <svg class="w-6 h-6 text-gray-700 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"></path>
-          </svg>
+        {% if pending_withdrawals %}
+        <div class="filet my-6"></div>
+        <h3 class="text-sm font-semibold text-ink mb-1">Retraits à affecter</h3>
+        <p class="text-xs text-ink-3 mb-3">
+          La banque ne dit pas de quel livret vient un retrait. Astuce : écrivez « LEP » ou « LIVRET A » dans le motif du virement, il sera affecté tout seul.
+        </p>
+        <div class="flex flex-col gap-2">
+          {% for tx in pending_withdrawals %}
+          <form method="post" class="flex flex-wrap items-center gap-2 rounded-card border border-line p-3">
+            {% csrf_token %}
+            <input type="hidden" name="form" value="savings_assign">
+            <input type="hidden" name="tx_id" value="{{ tx.id }}">
+            <span class="flex-1 min-w-[10rem] text-sm text-ink"><span class="etat etat-warn mr-2">À affecter</span><span class="num">{{ tx.posted_at|date:"d/m/Y" }} · +{{ tx.amount|floatformat:2 }} €</span> <span class="text-xs text-ink-3">({{ tx.account.name }})</span></span>
+            {% for a in livret_accounts %}
+            <button name="target" value="{{ a.id }}" class="btn btn-secondaire btn-petit">Depuis {{ a.get_savings_product_display }}</button>
+            {% endfor %}
+            <button name="target" value="none" class="btn btn-discret btn-petit">Pas un livret</button>
+          </form>
+          {% endfor %}
         </div>
-        <div>
-          <h3 class="text-lg font-bold text-gray-900 dark:text-white">Thème sombre</h3>
-          <p class="text-sm text-gray-600 dark:text-gray-400">Activez le mode sombre pour réduire la fatigue oculaire</p>
-        </div>
+        {% endif %}
       </div>
-      <label class="relative inline-flex items-center cursor-pointer">
-        <input type="checkbox" id="darkModeToggle" class="sr-only peer">
-        <div class="w-14 h-7 bg-gray-200 dark:bg-gray-600 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-light rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[4px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-primary"></div>
-      </label>
-    </div>
-    <div class="mt-4 p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-700">
-      <p class="text-xs text-gray-700 dark:text-gray-300">
-        <strong>Note :</strong> Le thème est enregistré dans votre navigateur.
-      </p>
-    </div>
-  </div>
+    </section>
+    {% endif %}
 
-  <script>
-    const darkModeToggle = document.getElementById('darkModeToggle');
-    const htmlElement = document.documentElement;
-    const currentTheme = localStorage.getItem('theme');
-    if (currentTheme === 'dark') {
-      htmlElement.classList.add('dark');
-      darkModeToggle.checked = true;
-    }
-    darkModeToggle.addEventListener('change', function() {
-      if (this.checked) {
-        htmlElement.classList.add('dark');
-        localStorage.setItem('theme', 'dark');
-      } else {
-        htmlElement.classList.remove('dark');
-        localStorage.setItem('theme', 'light');
-      }
-      if (typeof updateDarkModeIcon === 'function') updateDarkModeIcon(this.checked);
-      window.dispatchEvent(new CustomEvent('themechange', { detail: { dark: this.checked } }));
-    });
-  </script>
+    {% if tr_subaccounts %}
+    <section class="carte" aria-labelledby="t-tr">
+      <div class="carte-entete"><h2 class="carte-titre" id="t-tr">Sous-comptes Trade Republic</h2></div>
+      <form method="post" class="carte-corps">
+        {% csrf_token %}
+        <p class="text-sm text-ink-2 mb-4">
+          Indiquez le type fiscal de chaque sous-compte détecté lors de la synchronisation
+          (PEA, CTO, PEA-PME, Crypto). Tant qu'un sous-compte n'est pas classé, il est
+          compté par défaut en CTO.
+        </p>
+        <ul class="tableau-cadre divide-y divide-line">
+          {% for mapping in tr_subaccounts %}
+          <li class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 px-4 py-3">
+            <div class="flex flex-wrap items-center gap-2 min-w-0">
+              <label for="portfolio_type_{{ mapping.id }}" class="code break-all">{{ mapping.external_account_id }}</label>
+              {% if not mapping.portfolio_type %}<span class="etat etat-warn">À classer</span>{% endif %}
+            </div>
+            <select id="portfolio_type_{{ mapping.id }}" name="portfolio_type_{{ mapping.id }}" class="champ sm:w-56">
+              <option value="">Non classé</option>
+              {% for value, label in tr_portfolio_types %}
+              <option value="{{ value }}" {% if mapping.portfolio_type == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </li>
+          {% endfor %}
+        </ul>
+        <button type="submit" class="btn btn-principal mt-4">Enregistrer</button>
+      </form>
+    </section>
+    {% endif %}
+
+    <section class="carte" aria-labelledby="t-affichage">
+      <div class="carte-entete"><h2 class="carte-titre" id="t-affichage">Préférences d'affichage</h2></div>
+      <div class="carte-corps flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div class="flex items-start gap-3">
+          <span class="vignette">{% include "graphite/icone.html" with nom="lune" only %}</span>
+          <div>
+            <p class="text-sm font-medium text-ink">Thème sombre</p>
+            <p class="text-sm text-ink-3">Le thème est enregistré dans votre navigateur ; il suit le système tant que vous ne l'avez pas choisi.</p>
+          </div>
+        </div>
+        <button type="button" class="btn btn-secondaire shrink-0" data-action="theme" id="darkModeToggle">{% include "graphite/icone.html" with nom="lune" only %}Basculer le mode sombre</button>
+      </div>
+    </section>
+  </div>
 {% endblock %}

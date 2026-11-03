@@ -1,752 +1,423 @@
 {% extends 'base.html' %}
-{% load static %}
-{% block title %}Dashboard{% endblock %}
+{% load static finance_filters %}
+{% block title %}Tableau de bord{% endblock %}
+{% block extra_head %}
+<script src="{% static 'finance/vendor/chart.umd.min.js' %}"></script>
+<script src="{% static 'finance/vendor/d3.min.js' %}"></script>
+<script src="{% static 'finance/vendor/d3-sankey.min.js' %}"></script>
+{% endblock %}
 {% block content %}
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://d3js.org/d3.v7.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/dist/d3-sankey.min.js"></script>
-  
-  <!-- Style pour masquer les montants -->
-  <style>
-    .amounts-hidden .amount-value {
-      filter: blur(8px);
-      user-select: none;
-      transition: filter 0.3s ease;
-    }
-    .amounts-hidden .amount-value:hover {
-      filter: blur(8px);
-    }
-    .amount-value {
-      transition: filter 0.3s ease;
-    }
-  </style>
+  <!-- En-tête -->
+  <div class="page-entete">
+    <div>
+      <h1 class="page-titre">Tableau de bord</h1>
+      <p class="page-sous-titre">{{ period_label|capfirst }} : soldes, flux et performance de vos placements.</p>
+    </div>
+    <div class="page-actions">
+      <button type="button" id="toggleAmountsBtn" onclick="toggleAmounts()" class="btn btn-secondaire" aria-pressed="false" title="Masquer/Afficher les montants">
+        {% include "graphite/icone.html" with nom="cadenas" only %}<span id="toggleAmountsLabel">Masquer les montants</span>
+      </button>
+    </div>
+  </div>
 
-  <!-- Header avec sélection de période -->
-  <div class="mb-8">
-    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-      <div class="flex items-center gap-4">
-        <div>
-          <h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">Dashboard</h1>
-          <p class="text-gray-600 dark:text-gray-400">{{ period_label|capfirst }}</p>
-        </div>
-        <!-- Bouton pour masquer/afficher les montants -->
-        <button id="toggleAmountsBtn" onclick="toggleAmounts()" 
-                class="p-2 rounded-lg bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100 transition-colors"
-                title="Masquer/Afficher les montants">
-          <svg id="eyeOpenIcon" class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
-          </svg>
-          <svg id="eyeClosedIcon" class="w-6 h-6 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l3.59 3.59m0 0A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.543 7a10.025 10.025 0 01-4.132 5.411m0 0L21 21"></path>
-          </svg>
-        </button>
+  <!-- Période -->
+  <form method="get" id="periodForm" class="carte carte-corps mb-6 flex flex-col gap-3" aria-label="Période affichée">
+    <div class="segmente self-start" role="group" aria-label="Mode de sélection de la période">
+      <button type="button" id="quickSelectBtn" onclick="togglePeriodMode('quick')" aria-pressed="{% if is_custom_period %}false{% else %}true{% endif %}">Sélection rapide</button>
+      <button type="button" id="customSelectBtn" onclick="togglePeriodMode('custom')" aria-pressed="{% if is_custom_period %}true{% else %}false{% endif %}">Période personnalisée</button>
+    </div>
+
+    <div id="quickSelectMode" class="flex flex-wrap items-end gap-3 {% if is_custom_period %}hidden{% endif %}">
+      <div>
+        <label for="month" class="champ-libelle">Mois</label>
+        <input type="month" id="month" name="month" class="champ w-auto" value="{% if selected_month %}{{ selected_month }}{% else %}{{ start_date|slice:':7' }}{% endif %}" aria-describedby="month-aide">
       </div>
-      
-      <!-- Formulaire de sélection de période -->
-      <form method="get" id="periodForm" class="flex flex-col gap-3">
-        
-        <!-- Toggle: Sélection rapide / Période personnalisée -->
-        <div class="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
-          <button type="button" id="quickSelectBtn" onclick="togglePeriodMode('quick')" 
-                  class="flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors {% if not is_custom_period %}bg-white dark:bg-gray-800 text-primary dark:text-primary-light shadow-sm{% else %}text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white{% endif %}">
-            📅 Sélection rapide
-          </button>
-          <button type="button" id="customSelectBtn" onclick="togglePeriodMode('custom')" 
-                  class="flex-1 px-3 py-1.5 text-sm font-medium rounded-md transition-colors {% if is_custom_period %}bg-white dark:bg-gray-800 text-primary dark:text-primary-light shadow-sm{% else %}text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white{% endif %}">
-            🗓️ Période personnalisée
-          </button>
-        </div>
-        
-        <!-- Mode 1: Sélection rapide par mois (du 24 au 24) -->
-        <div id="quickSelectMode" class="flex flex-wrap items-end gap-3 {% if is_custom_period %}hidden{% endif %}">
-          <div class="flex flex-col gap-1">
-            <label for="month" class="text-xs font-medium text-gray-700 dark:text-gray-300">Sélectionnez un mois</label>
-            <input type="month" id="month" name="month" value="{% if selected_month %}{{ selected_month }}{% else %}{{ start_date|slice:':7' }}{% endif %}" 
-                   class="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-          </div>
-          <button type="submit" class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors shadow-sm">
-            Appliquer
-          </button>
-          <button type="button" onclick="setCurrentMonth()" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
-            Mois actuel
-          </button>
-          <span class="text-xs text-gray-500 dark:text-gray-400 flex items-center">
-            💡 Du 24 du mois précédent au 24 du mois sélectionné
-          </span>
-        </div>
-        
-        <!-- Mode 2: Période personnalisée -->
-        <div id="customSelectMode" class="flex flex-wrap items-end gap-3 {% if not is_custom_period %}hidden{% endif %}">
-          <div class="flex flex-col gap-1">
-            <label for="start_date" class="text-xs font-medium text-gray-700 dark:text-gray-300">Date de début</label>
-            <input type="date" id="start_date" name="start_date" value="{{ start_date }}" 
-                   class="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-          </div>
-          <div class="flex flex-col gap-1">
-            <label for="end_date" class="text-xs font-medium text-gray-700 dark:text-gray-300">Date de fin</label>
-            <input type="date" id="end_date" name="end_date" value="{{ end_date }}" 
-                   class="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-          </div>
-          <button type="submit" class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors shadow-sm">
-            Appliquer
-          </button>
-        </div>
+      <button type="submit" class="btn btn-principal">Appliquer</button>
+      <button type="button" onclick="setCurrentMonth()" class="btn btn-secondaire">Mois actuel</button>
+      <p class="champ-aide self-center mt-0" id="month-aide">Du 24 du mois précédent au 24 du mois sélectionné.</p>
+    </div>
+
+    <div id="customSelectMode" class="flex flex-wrap items-end gap-3 {% if not is_custom_period %}hidden{% endif %}">
+      <div>
+        <label for="start_date" class="champ-libelle">Date de début</label>
+        <input type="date" id="start_date" name="start_date" value="{{ start_date }}" class="champ w-auto">
+      </div>
+      <div>
+        <label for="end_date" class="champ-libelle">Date de fin</label>
+        <input type="date" id="end_date" name="end_date" value="{{ end_date }}" class="champ w-auto">
+      </div>
+      <button type="submit" class="btn btn-principal">Appliquer</button>
+    </div>
+  </form>
+
+  <!-- Indicateurs -->
+  <section aria-label="Indicateurs de la période" class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+    <div class="carte carte-vedette carte-corps col-span-2 lg:col-span-1">
+      <p class="kpi-libelle">Patrimoine total</p>
+      <p class="kpi-valeur"><span class="amount-value">{{ total_wealth|floatformat:2 }} €</span></p>
+      <p class="kpi-ecart">Comptes courants, épargne et investissements</p>
+    </div>
+
+    <div class="carte carte-corps col-span-2 sm:col-span-1">
+      <p class="kpi-libelle">Solde courant</p>
+      <p class="kpi-valeur"><span class="amount-value">{{ checking_balance|floatformat:2 }} €</span></p>
+      <p class="kpi-ecart"><span><span class="num amount-value">{% if period_balance >= 0 %}+{% endif %}{{ period_balance|floatformat:2 }} €</span> vs veille</span></p>
+      <form method="get" class="mt-3">
+        {% if selected_month %}
+        <input type="hidden" name="month" value="{{ selected_month }}">
+        {% elif is_custom_period %}
+        <input type="hidden" name="start_date" value="{{ start_date }}">
+        <input type="hidden" name="end_date" value="{{ end_date }}">
+        {% endif %}
+        <label for="current_balance_date" class="champ-libelle text-xs mb-1">Date du solde</label>
+        <input id="current_balance_date" name="current_balance_date" type="date" value="{{ current_balance_date }}" onchange="this.form.submit()" class="champ min-h-0 py-1 text-xs">
       </form>
     </div>
-  </div>
 
-  <!-- Cartes principales de métriques -->
-  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-    <!-- Solde courant -->
-    <div class="bg-gradient-to-br from-primary to-primary-dark rounded-2xl shadow-lg p-6 text-white">
-      <div class="mb-2">
-        <div class="flex items-center justify-between">
-          <span class="text-primary-light text-sm font-medium">Solde courant</span>
-          <svg class="w-6 h-6 text-primary-light" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-          </svg>
-        </div>
-        <form method="get" class="mt-2 w-fit">
-          {% if selected_month %}
-          <input type="hidden" name="month" value="{{ selected_month }}">
-          {% elif is_custom_period %}
-          <input type="hidden" name="start_date" value="{{ start_date }}">
-          <input type="hidden" name="end_date" value="{{ end_date }}">
-          {% endif %}
-          <label for="current_balance_date" class="block text-[10px] text-primary-light/90 mb-1">Date du solde</label>
-          <input
-            id="current_balance_date"
-            name="current_balance_date"
-            type="date"
-            value="{{ current_balance_date }}"
-            onchange="this.form.submit()"
-            class="w-[170px] max-w-full bg-white/20 border border-white/30 text-white text-xs rounded-md px-2 py-1 focus:outline-none focus:ring-2 focus:ring-white/40"
-          >
-        </form>
-      </div>
-      <div class="text-3xl font-bold mb-1"><span class="amount-value">{{ checking_balance|floatformat:2 }} €</span></div>
-      <div class="text-xs text-primary-light">
-        {% if period_balance >= 0 %}
-          <span class="text-green-300 amount-value">+{{ period_balance|floatformat:2 }} €</span>
-        {% else %}
-          <span class="text-red-300 amount-value">{{ period_balance|floatformat:2 }} €</span>
-        {% endif %}
-        vs veille
-      </div>
+    <div class="carte carte-corps">
+      <p class="kpi-libelle">Revenus</p>
+      <p class="kpi-valeur"><span class="amount-value">{{ income|floatformat:2 }} €</span></p>
+      <p class="kpi-ecart">{% if income_trend >= 0 %}{% include "graphite/icone.html" with nom="tendance-hausse" only %}{% else %}{% include "graphite/icone.html" with nom="tendance-baisse" only %}{% endif %}<span><span class="num amount-value">{% if income_trend >= 0 %}+{% endif %}{{ income_trend|floatformat:1 }} %</span> vs période précédente</span></p>
     </div>
 
-    <!-- Épargne -->
-    <div class="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl shadow-lg p-6 text-white">
-      <div class="flex items-center justify-between mb-2">
-        <span class="text-blue-200 text-sm font-medium">Épargne</span>
-        <svg class="w-6 h-6 text-blue-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
-        </svg>
-      </div>
-      <div class="text-3xl font-bold mb-1"><span class="amount-value">{{ savings_balance|floatformat:2 }} €</span></div>
-      <div class="text-xs text-blue-200">
-        Livrets d'épargne
-      </div>
+    <div class="carte carte-corps">
+      <p class="kpi-libelle">Dépenses</p>
+      <p class="kpi-valeur"><span class="amount-value">{{ expenses|floatformat:2 }} €</span></p>
+      <p class="kpi-ecart">{% if expense_trend >= 0 %}{% include "graphite/icone.html" with nom="tendance-hausse" only %}{% else %}{% include "graphite/icone.html" with nom="tendance-baisse" only %}{% endif %}<span><span class="num amount-value">{% if expense_trend >= 0 %}+{% endif %}{{ expense_trend|floatformat:1 }} %</span> vs période précédente</span></p>
     </div>
+  </section>
 
-    <!-- Revenus -->
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 hover:shadow-xl transition-shadow">
-      <div class="flex items-center justify-between mb-2">
-        <span class="text-gray-600 dark:text-gray-400 text-sm font-medium">Revenus</span>
-        <div class="w-10 h-10 bg-green-100 dark:bg-green-900/40 rounded-lg flex items-center justify-center">
-          <svg class="w-5 h-5 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
-          </svg>
-        </div>
+  <!-- Patrimoine et investissements -->
+  <div class="grid lg:grid-cols-3 gap-4 mb-6">
+    <section class="carte" aria-labelledby="t-patrimoine">
+      <div class="carte-entete">
+        <h2 class="carte-titre" id="t-patrimoine">Répartition du patrimoine</h2>
       </div>
-      <div class="text-3xl font-bold text-gray-900 dark:text-white mb-1"><span class="amount-value">{{ income|floatformat:2 }} €</span></div>
-      <div class="flex items-center text-xs">
-        {% if income_trend >= 0 %}
-          <span class="text-green-600 dark:text-green-400 font-medium amount-value">+{{ income_trend|floatformat:1 }}%</span>
-        {% else %}
-          <span class="text-red-600 dark:text-red-400 font-medium amount-value">{{ income_trend|floatformat:1 }}%</span>
-        {% endif %}
-        <span class="text-gray-500 dark:text-gray-400 ml-1">vs période précédente</span>
+      <div class="carte-corps space-y-3">
+        <div class="ligne-valeur"><span>Solde courant</span><span class="amount-value">{{ checking_balance|floatformat:2 }} €</span></div>
+        <div class="ligne-valeur"><span>Épargne <span class="text-ink-3 text-xs">· livrets d'épargne</span></span><span class="amount-value">{{ savings_balance|floatformat:2 }} €</span></div>
+        <div class="ligne-valeur"><span>Investissements</span><span class="amount-value">{{ current_valuation|floatformat:2 }} €</span></div>
+        <div class="filet"></div>
+        <div class="ligne-valeur font-semibold"><span class="text-ink">Total</span><span class="amount-value">{{ total_wealth|floatformat:2 }} €</span></div>
       </div>
-    </div>
+    </section>
 
-    <!-- Dépenses -->
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 hover:shadow-xl transition-shadow">
-      <div class="flex items-center justify-between mb-2">
-        <span class="text-gray-600 dark:text-gray-400 text-sm font-medium">Dépenses</span>
-        <div class="w-10 h-10 bg-red-100 dark:bg-red-900/40 rounded-lg flex items-center justify-center">
-          <svg class="w-5 h-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"></path>
-          </svg>
-        </div>
+    <section class="carte lg:col-span-2" aria-labelledby="t-invest">
+      <div class="carte-entete">
+        <h2 class="carte-titre" id="t-invest">Investissements</h2>
+        <span class="text-xs text-ink-3">Valorisation au {{ valuation_date_display }}</span>
       </div>
-      <div class="text-3xl font-bold text-gray-900 dark:text-white mb-1"><span class="amount-value">{{ expenses|floatformat:2 }} €</span></div>
-      <div class="flex items-center text-xs">
-        {% if expense_trend >= 0 %}
-          <span class="text-red-600 dark:text-red-400 font-medium amount-value">+{{ expense_trend|floatformat:1 }}%</span>
-        {% else %}
-          <span class="text-green-600 dark:text-green-400 font-medium amount-value">{{ expense_trend|floatformat:1 }}%</span>
-        {% endif %}
-        <span class="text-gray-500 dark:text-gray-400 ml-1">vs période précédente</span>
-      </div>
-    </div>
-  </div>
-
-  <!-- Patrimoine total et Investissements -->
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-    <!-- Patrimoine total -->
-    <div class="bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl shadow-lg p-6 text-white">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-bold">Patrimoine total</h2>
-        <svg class="w-8 h-8 text-purple-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
-        </svg>
-      </div>
-      <div class="text-4xl font-bold mb-4"><span class="amount-value">{{ total_wealth|floatformat:2 }} €</span></div>
-      <div class="space-y-2 text-sm">
-        <div class="flex items-center justify-between pb-2 border-b border-purple-400/30">
-          <span class="text-purple-200">Solde courant</span>
-          <span class="font-semibold amount-value">{{ checking_balance|floatformat:2 }} €</span>
-        </div>
-        <div class="flex items-center justify-between pb-2 border-b border-purple-400/30">
-          <span class="text-purple-200">Épargne</span>
-          <span class="font-semibold amount-value">{{ savings_balance|floatformat:2 }} €</span>
-        </div>
-        <div class="flex items-center justify-between">
-          <span class="text-purple-200">Investissements</span>
-          <span class="font-semibold amount-value">{{ current_valuation|floatformat:2 }} €</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Investissements détaillés -->
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-bold text-gray-900 dark:text-white">Investissements</h2>
-        <div class="w-10 h-10 bg-purple-100 dark:bg-purple-900/40 rounded-lg flex items-center justify-center">
-          <svg class="w-5 h-5 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
-          </svg>
-        </div>
-      </div>
-      <div class="space-y-4">
-        <div>
-          <div class="text-sm text-gray-600 dark:text-gray-400 mb-1">Valorisation au {{ valuation_date_display }}</div>
-          <div class="text-3xl font-bold text-gray-900 dark:text-white"><span class="amount-value">{{ current_valuation|floatformat:2 }} €</span></div>
-        </div>
-        <div class="grid grid-cols-2 gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+      <div class="carte-corps">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div>
-            <div class="text-xs text-gray-600 dark:text-gray-400 mb-1">Montant investi</div>
-            <div class="text-lg font-semibold text-gray-900 dark:text-white"><span class="amount-value">{{ total_invested|floatformat:2 }} €</span></div>
+            <p class="kpi-libelle">Valorisation</p>
+            <p class="kpi-valeur"><span class="amount-value">{{ current_valuation|floatformat:2 }} €</span></p>
           </div>
           <div>
-            <div class="text-xs text-gray-600 dark:text-gray-400 mb-1">Plus-value</div>
-            <div class="text-lg font-semibold {% if investment_gain >= 0 %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %}">
-              <span class="amount-value">{% if investment_gain >= 0 %}+{% endif %}{{ investment_gain|floatformat:2 }} €</span>
-            </div>
+            <p class="kpi-libelle">Montant investi</p>
+            <p class="kpi-valeur"><span class="amount-value">{{ total_invested|floatformat:2 }} €</span></p>
+          </div>
+          <div>
+            <p class="kpi-libelle">Plus-value</p>
+            <p class="kpi-valeur"><span class="amount-value">{% if investment_gain >= 0 %}+{% endif %}{{ investment_gain|floatformat:2 }} €</span></p>
+          </div>
+          <div>
+            <p class="kpi-libelle">Performance</p>
+            <p class="kpi-valeur"><span class="amount-value">{% if investment_gain_percent >= 0 %}+{% endif %}{{ investment_gain_percent|floatformat:2 }} %</span></p>
           </div>
         </div>
-        <div class="pt-3 border-t border-gray-200 dark:border-gray-700">
-          <div class="flex items-center justify-between mb-3">
-            <span class="text-sm text-gray-600 dark:text-gray-400">Performance</span>
-            <span class="text-xl font-bold {% if investment_gain_percent >= 0 %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %} amount-value">
-              {% if investment_gain_percent >= 0 %}+{% endif %}{{ investment_gain_percent|floatformat:2 }}%
-            </span>
-          </div>
-          {% if investment_accounts %}
-          <button onclick="openValuationModal()" class="w-full mt-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors flex items-center justify-center gap-2">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
-            </svg>
-            Mettre à jour la valorisation
-          </button>
-          {% endif %}
+        {% if investment_accounts %}
+        <div class="mt-4">
+          <button type="button" onclick="openValuationModal()" class="btn btn-secondaire">{% include "graphite/icone.html" with nom="plus" only %}Mettre à jour la valorisation</button>
         </div>
+        {% endif %}
       </div>
-    </div>
+    </section>
   </div>
 
   <!-- Détail par type de portefeuille (bridge TR) -->
   {% if bridge_portfolio_breakdown %}
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-6">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-lg font-bold text-gray-900 dark:text-white">Répartition du portefeuille</h2>
-      <div class="w-10 h-10 bg-indigo-100 dark:bg-indigo-900/40 rounded-lg flex items-center justify-center">
-        <svg class="w-5 h-5 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"></path>
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"></path>
-        </svg>
-      </div>
-    </div>
+  <section class="mb-6" aria-labelledby="t-repartition">
+    <h2 class="carte-titre mb-3" id="t-repartition">Répartition du portefeuille</h2>
     <div class="grid grid-cols-1 gap-3 sm:grid-cols-{% if bridge_portfolio_breakdown|length == 1 %}1{% elif bridge_portfolio_breakdown|length == 2 %}2{% else %}3{% endif %}">
       {% for item in bridge_portfolio_breakdown %}
-      <div class="rounded-xl border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50 p-4">
-        <div class="flex items-center justify-between mb-3">
-          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold
-            {% if item.type == 'CTO' %}bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300
-            {% elif item.type == 'PEA' %}bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300
-            {% elif item.type == 'PEA-PME' %}bg-teal-100 dark:bg-teal-900/40 text-teal-800 dark:text-teal-300
-            {% elif item.type == 'CRYPTO' %}bg-orange-100 dark:bg-orange-900/40 text-orange-800 dark:text-orange-300
-            {% else %}bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-100{% endif %}">
-            {{ item.type }}
-          </span>
-          <span class="text-sm font-semibold {% if item.gain_pct >= 0 %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %}">
-            {% if item.gain_pct >= 0 %}+{% endif %}{{ item.gain_pct|floatformat:2 }}%
-          </span>
+      <div class="carte carte-corps">
+        <div class="flex items-center justify-between mb-2">
+          <span class="etiquette">{{ item.type }}</span>
+          <span class="num text-sm font-medium text-ink">{% if item.gain_pct >= 0 %}+{% endif %}{{ item.gain_pct|floatformat:2 }} %</span>
         </div>
-        <div class="text-xl font-bold text-gray-900 dark:text-white mb-1">
-          <span class="amount-value">{{ item.valuation|floatformat:2 }} €</span>
-        </div>
-        <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
-          <span>Investi : <span class="amount-value font-medium text-gray-700 dark:text-gray-300">{{ item.invested|floatformat:2 }} €</span></span>
-          <span class="{% if item.gain >= 0 %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %} font-medium">
-            {% if item.gain >= 0 %}+{% endif %}<span class="amount-value">{{ item.gain|floatformat:2 }} €</span>
-          </span>
+        <p class="kpi-valeur mt-0"><span class="amount-value">{{ item.valuation|floatformat:2 }} €</span></p>
+        <div class="flex items-center justify-between text-xs text-ink-3 mt-1">
+          <span>Investi : <span class="amount-value num text-ink-2">{{ item.invested|floatformat:2 }} €</span></span>
+          <span class="num text-ink-2">{% if item.gain >= 0 %}+{% endif %}<span class="amount-value">{{ item.gain|floatformat:2 }} €</span></span>
         </div>
       </div>
       {% endfor %}
     </div>
-  </div>
+  </section>
   {% endif %}
 
-  <!-- TRI (Taux de Rentabilité Interne) -->
+  <!-- TRI (taux de rentabilité interne) -->
   {% if investment_accounts %}
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-6" id="tri-card">
-    <div class="flex items-center justify-between mb-5">
-      <div class="flex items-center gap-3">
-        <div class="w-10 h-10 bg-emerald-100 dark:bg-emerald-900/40 rounded-lg flex items-center justify-center">
-          <svg class="w-5 h-5 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
-          </svg>
+  <section class="carte mb-6" id="tri-card" aria-labelledby="t-tri">
+    <div class="carte-entete flex-wrap">
+      <div>
+        <h2 class="carte-titre" id="t-tri">TRI — Taux de Rentabilité Interne</h2>
+        <p class="text-xs text-ink-3">Rendement annualisé tenant compte des dates de versement (XIRR)</p>
+      </div>
+    </div>
+    <div class="carte-corps">
+      <div class="segmente mb-4" role="group" aria-label="Période du TRI">
+        <button type="button" onclick="loadTri('since_inception')" id="tri-btn-since_inception" class="tri-period-btn" aria-pressed="true">Depuis le début</button>
+        <button type="button" onclick="loadTri('ytd')" id="tri-btn-ytd" class="tri-period-btn" aria-pressed="false">Année en cours</button>
+        <button type="button" onclick="loadTri('1y')" id="tri-btn-1y" class="tri-period-btn" aria-pressed="false">12 mois glissants</button>
+        <button type="button" onclick="loadTri('custom')" id="tri-btn-custom" class="tri-period-btn" aria-pressed="false">Personnalisée</button>
+      </div>
+
+      <div id="tri-custom-dates" class="hidden flex flex-wrap items-end gap-3 mb-4 p-3 rounded-ctl bg-sunken border border-line">
+        <div>
+          <label for="tri-date-start" class="champ-libelle">Du</label>
+          <input type="date" id="tri-date-start" class="champ w-auto">
         </div>
         <div>
-          <h2 class="text-lg font-bold text-gray-900 dark:text-white">TRI — Taux de Rentabilité Interne</h2>
-          <p class="text-xs text-gray-500 dark:text-gray-400">Rendement annualisé tenant compte des dates de versement (XIRR)</p>
+          <label for="tri-date-end" class="champ-libelle">au</label>
+          <input type="date" id="tri-date-end" class="champ w-auto">
         </div>
-      </div>
-    </div>
-
-    <!-- Sélecteur de période -->
-    <div class="flex flex-wrap gap-2 mb-5">
-      <button onclick="loadTri('since_inception')" id="tri-btn-since_inception"
-        class="tri-period-btn px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors bg-emerald-600 text-white border-emerald-600">
-        Depuis le début
-      </button>
-      <button onclick="loadTri('ytd')" id="tri-btn-ytd"
-        class="tri-period-btn px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700">
-        Année en cours
-      </button>
-      <button onclick="loadTri('1y')" id="tri-btn-1y"
-        class="tri-period-btn px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700">
-        12 mois glissants
-      </button>
-      <button onclick="loadTri('custom')" id="tri-btn-custom"
-        class="tri-period-btn px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700">
-        Personnalisée
-      </button>
-    </div>
-
-    <!-- Dates custom (masquées par défaut) -->
-    <div id="tri-custom-dates" class="hidden flex flex-wrap gap-3 mb-5 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl">
-      <div class="flex items-center gap-2">
-        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">Du</label>
-        <input type="date" id="tri-date-start" class="text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500">
-      </div>
-      <div class="flex items-center gap-2">
-        <label class="text-sm text-gray-600 dark:text-gray-400 whitespace-nowrap">au</label>
-        <input type="date" id="tri-date-end" class="text-sm border border-gray-300 dark:border-gray-600 rounded-lg px-2 py-1.5 focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500">
-      </div>
-      <button onclick="loadTri('custom')" class="px-3 py-1.5 bg-emerald-600 text-white text-sm rounded-lg hover:bg-emerald-700 transition-colors">
-        Calculer
-      </button>
-    </div>
-
-    <!-- Résultats -->
-    <div id="tri-results">
-      <!-- Loading -->
-      <div id="tri-loading" class="flex items-center justify-center py-8 gap-3 text-gray-500 dark:text-gray-400">
-        <svg class="animate-spin w-5 h-5 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-        </svg>
-        <span class="text-sm">Calcul en cours…</span>
+        <button type="button" onclick="loadTri('custom')" class="btn btn-secondaire">Calculer</button>
       </div>
 
-      <!-- Données -->
-      <div id="tri-data" class="hidden">
-        <!-- TRI Global -->
-        <div class="flex items-center justify-between p-4 bg-emerald-50 dark:bg-emerald-900/20 rounded-xl mb-4">
-          <div>
-            <div class="text-sm font-semibold text-gray-700 dark:text-gray-300">Portefeuille global</div>
-            <div class="text-xs text-gray-500 dark:text-gray-400" id="tri-period-label">—</div>
+      <div id="tri-results">
+        <div id="tri-loading" class="flex items-center justify-center py-8 gap-3 text-ink-3">
+          {% include "graphite/icone.html" with nom="actualiser" classe="w-5 h-5 animate-spin" %}
+          <span class="text-sm">Calcul en cours…</span>
+        </div>
+
+        <div id="tri-data" class="hidden">
+          <div class="flex items-center justify-between gap-4 p-4 rounded-ctl bg-sunken border border-line mb-4">
+            <div>
+              <p class="text-sm font-medium text-ink">Portefeuille global</p>
+              <p class="text-xs text-ink-3" id="tri-period-label">—</p>
+            </div>
+            <div class="text-right">
+              <p class="kpi-valeur mt-0" id="tri-global-display">—</p>
+              <p class="text-xs text-ink-3" id="tri-global-label">annualisé</p>
+              <p class="text-xs text-ink-3 mt-0.5" id="tri-global-secondary"></p>
+            </div>
           </div>
-          <div class="text-right">
-            <div class="text-2xl font-bold" id="tri-global-display">—</div>
-            <div class="text-xs text-gray-500 dark:text-gray-400" id="tri-global-label">annualisé</div>
-            <div class="text-xs text-gray-400 mt-0.5" id="tri-global-secondary"></div>
+
+          <div id="tri-by-type" class="grid grid-cols-2 gap-3 mb-4 sm:grid-cols-4"></div>
+
+          <div id="tri-by-account-container" class="hidden">
+            <p class="libelle mb-2">Par compte</p>
+            <div id="tri-by-account" class="tableau-cadre divide-y divide-line"></div>
+          </div>
+
+          <div id="tri-warning" class="hidden mt-3 message message-info">
+            {% include "graphite/icone.html" with nom="warn" only %}
+            <p class="flex-1" id="tri-warning-texte"></p>
           </div>
         </div>
 
-        <!-- TRI par type -->
-        <div id="tri-by-type" class="grid grid-cols-2 gap-3 mb-4 sm:grid-cols-4"></div>
-
-        <!-- TRI par compte -->
-        <div id="tri-by-account-container" class="hidden">
-          <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Par compte</div>
-          <div id="tri-by-account" class="space-y-2"></div>
+        <div id="tri-error" class="hidden message message-crit" role="alert">
+          {% include "graphite/icone.html" with nom="crit" only %}
+          <p class="flex-1" id="tri-error-texte"></p>
         </div>
-
-        <!-- Avertissement données insuffisantes -->
-        <div id="tri-warning" class="hidden mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-xs text-amber-700 dark:text-amber-300"></div>
       </div>
-
-      <!-- Erreur -->
-      <div id="tri-error" class="hidden py-6 text-center text-sm text-red-500"></div>
     </div>
-  </div>
+  </section>
   {% endif %}
 
-  <!-- Liste des comptes -->
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-8">
-    <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-6">Vos comptes</h2>
-    
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      <!-- Comptes courants -->
-      <div>
-        <div class="flex items-center gap-2 mb-4">
-          <div class="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center">
-            <svg class="w-4 h-4 text-primary dark:text-primary-light" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"></path>
-            </svg>
-          </div>
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Comptes courants</h3>
-        </div>
+  <!-- Comptes -->
+  <section class="mb-6" aria-labelledby="t-comptes">
+    <h2 class="carte-titre mb-3" id="t-comptes">Vos comptes</h2>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="carte">
+        <div class="carte-entete"><h3 class="carte-titre text-sm flex items-center gap-2">{% include "graphite/icone.html" with nom="carte-bancaire" classe="w-4 h-4 text-ink-3" %}Comptes courants</h3></div>
         {% if checking_accounts_list %}
-          <div class="space-y-2">
-            {% for account in checking_accounts_list %}
-            <div class="p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-              <div class="flex items-center justify-between">
-                <div class="flex-1 min-w-0">
-                  <div class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ account.name }}</div>
-                  <div class="text-xs text-gray-500 dark:text-gray-400 capitalize">{{ account.provider }}</div>
-                </div>
-                <div class="text-sm font-semibold text-gray-900 dark:text-white ml-3 amount-value">{{ account.balance|floatformat:2 }} €</div>
-              </div>
+        <ul class="divide-y divide-line">
+          {% for account in checking_accounts_list %}
+          <li class="flex items-center gap-3 px-4 py-2.5">
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-ink truncate">{{ account.name }}</p>
+              <p class="text-xs text-ink-3 capitalize">{{ account.provider }}</p>
             </div>
-            {% endfor %}
-          </div>
+            <p class="num text-sm font-semibold text-ink amount-value">{{ account.balance|floatformat:2 }} €</p>
+          </li>
+          {% endfor %}
+        </ul>
         {% else %}
-          <p class="text-sm text-gray-500 dark:text-gray-400 italic">Aucun compte courant</p>
+        <p class="carte-corps text-sm text-ink-3">Aucun compte courant</p>
         {% endif %}
       </div>
 
-      <!-- Livrets d'épargne -->
-      <div>
-        <div class="flex items-center gap-2 mb-4">
-          <div class="w-8 h-8 bg-blue-100 dark:bg-blue-900/40 rounded-lg flex items-center justify-center">
-            <svg class="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path>
-            </svg>
-          </div>
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Livrets & Épargne</h3>
-        </div>
+      <div class="carte">
+        <div class="carte-entete"><h3 class="carte-titre text-sm flex items-center gap-2">{% include "graphite/icone.html" with nom="disques" classe="w-4 h-4 text-ink-3" %}Livrets et épargne</h3></div>
         {% if savings_accounts_list %}
-          <div class="space-y-2">
-            {% for account in savings_accounts_list %}
-            <div class="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
-              <div class="flex items-center justify-between">
-                <div class="flex-1 min-w-0">
-                  <div class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ account.name }}</div>
-                  <div class="text-xs text-gray-500 dark:text-gray-400 capitalize">{{ account.provider }}</div>
-                </div>
-                <div class="text-sm font-semibold text-gray-900 dark:text-white ml-3 amount-value">{{ account.balance|floatformat:2 }} €</div>
-              </div>
+        <ul class="divide-y divide-line">
+          {% for account in savings_accounts_list %}
+          <li class="flex items-center gap-3 px-4 py-2.5">
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-ink truncate">{{ account.name }}</p>
+              <p class="text-xs text-ink-3 capitalize">{{ account.provider }}</p>
             </div>
-            {% endfor %}
-          </div>
+            <p class="num text-sm font-semibold text-ink amount-value">{{ account.balance|floatformat:2 }} €</p>
+          </li>
+          {% endfor %}
+        </ul>
         {% else %}
-          <p class="text-sm text-gray-500 dark:text-gray-400 italic">Aucun livret d'épargne</p>
+        <p class="carte-corps text-sm text-ink-3">Aucun livret d'épargne</p>
         {% endif %}
       </div>
 
-      <!-- Investissements -->
-            <div>
-        <div class="flex items-center gap-2 mb-4">
-          <div class="w-8 h-8 bg-purple-100 dark:bg-purple-900/40 rounded-lg flex items-center justify-center">
-            <svg class="w-4 h-4 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
-            </svg>
-          </div>
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Investissements</h3>
-        </div>
+      <div class="carte">
+        <div class="carte-entete"><h3 class="carte-titre text-sm flex items-center gap-2">{% include "graphite/icone.html" with nom="graphique" classe="w-4 h-4 text-ink-3" %}Investissements</h3></div>
         {% if investment_accounts_list_detailed %}
-          <div class="space-y-2">
-            {% for account in investment_accounts_list_detailed %}
-            <div class="p-3 bg-purple-50 dark:bg-purple-900/20 rounded-lg hover:bg-purple-100 dark:hover:bg-purple-900/40 transition-colors">
-              <div class="flex items-center justify-between">
-                <div class="flex-1 min-w-0">
-                  <div class="text-sm font-medium text-gray-900 dark:text-white truncate">{{ account.name }}</div>
-                  <div class="text-xs text-gray-500 dark:text-gray-400 capitalize">{{ account.provider }}</div>
-                </div>
-                <div class="ml-3">
-                  <div class="text-sm font-semibold text-gray-900 dark:text-white text-right amount-value">{{ account.balance|floatformat:2 }} €</div>
-                  <div class="text-xs text-gray-500 dark:text-gray-400 text-right">Investi: <span class="amount-value">{{ account.invested|floatformat:2 }} €</span></div>
-                </div>
-              </div>
+        <ul class="divide-y divide-line">
+          {% for account in investment_accounts_list_detailed %}
+          <li class="flex items-center gap-3 px-4 py-2.5">
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-medium text-ink truncate">{{ account.name }}</p>
+              <p class="text-xs text-ink-3 capitalize">{{ account.provider }}</p>
             </div>
-            {% endfor %}
-          </div>
+            <div class="text-right">
+              <p class="num text-sm font-semibold text-ink amount-value">{{ account.balance|floatformat:2 }} €</p>
+              <p class="text-xs text-ink-3">Investi : <span class="num amount-value">{{ account.invested|floatformat:2 }} €</span></p>
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
         {% else %}
-          <p class="text-sm text-gray-500 dark:text-gray-400 italic">Aucun investissement</p>
+        <p class="carte-corps text-sm text-ink-3">Aucun investissement</p>
         {% endif %}
       </div>
     </div>
-  </div>
+  </section>
 
-  <!-- Statistiques avancées -->
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 mb-8">
-    <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-6">Statistiques & Comparaisons</h2>
-    
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-      <!-- Taux d'épargne -->
-      <div class="bg-gradient-to-br from-emerald-50 dark:from-emerald-900/30 to-teal-50 dark:to-teal-900/30 rounded-xl p-4 border border-emerald-200 dark:border-emerald-800">
-        <div class="flex items-center gap-2 mb-2">
-          <div class="w-8 h-8 bg-emerald-500 rounded-lg flex items-center justify-center">
-            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-            </svg>
-          </div>
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Taux d'épargne</h3>
-        </div>
-        <div class="text-3xl font-bold {% if savings_rate >= 0 %}text-emerald-600 dark:text-emerald-400{% else %}text-red-600 dark:text-red-400{% endif %} mb-1">
-          <span class="amount-value">{{ savings_rate|floatformat:1 }}%</span>
-        </div>
-        <div class="text-xs text-gray-600 dark:text-gray-400">De vos revenus</div>
+  <!-- Statistiques et comparaisons -->
+  <section class="mb-6" aria-labelledby="t-stats">
+    <h2 class="carte-titre mb-3" id="t-stats">Statistiques et comparaisons</h2>
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div class="carte carte-corps">
+        <p class="kpi-libelle">Taux d'épargne</p>
+        <p class="kpi-valeur"><span class="amount-value">{{ savings_rate|floatformat:1 }} %</span></p>
+        <p class="kpi-ecart">De vos revenus</p>
       </div>
-
-      <!-- Moyenne 6 mois -->
-      <div class="bg-gradient-to-br from-blue-50 dark:from-blue-900/30 to-indigo-50 dark:to-indigo-900/30 rounded-xl p-4 border border-blue-200 dark:border-blue-800">
-        <div class="flex items-center gap-2 mb-2">
-          <div class="w-8 h-8 bg-blue-500 rounded-lg flex items-center justify-center">
-            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
-            </svg>
-          </div>
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Moyenne 6 mois</h3>
-        </div>
-        <div class="text-2xl font-bold text-gray-900 dark:text-white mb-1"><span class="amount-value">{{ avg_6m_balance|floatformat:0 }} €</span></div>
-        <div class="text-xs text-gray-600 dark:text-gray-400">
-          <span class="{% if stats_period_balance >= avg_6m_balance %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %} font-medium">
-            {% if stats_period_balance >= avg_6m_balance %}+{% endif %}{{ stats_period_balance|floatformat:0|add:"-"|add:avg_6m_balance|floatformat:0 }} € vs moy.
-          </span>
-        </div>
+      <div class="carte carte-corps">
+        <p class="kpi-libelle">Moyenne 6 mois</p>
+        <p class="kpi-valeur"><span class="amount-value">{{ avg_6m_balance|floatformat:0 }} €</span></p>
+        {% with moins=avg_6m_balance|mul:-1 %}<p class="kpi-ecart"><span><span class="num">{% if stats_period_balance >= avg_6m_balance %}+{% endif %}{{ stats_period_balance|add:moins|floatformat:0 }} €</span> vs moy.</span></p>{% endwith %}
       </div>
-
-      <!-- Meilleur mois -->
       {% if best_month %}
-      <div class="bg-gradient-to-br from-green-50 dark:from-green-900/30 to-emerald-50 dark:to-emerald-900/30 rounded-xl p-4 border border-green-200 dark:border-green-800">
-        <div class="flex items-center gap-2 mb-2">
-          <div class="w-8 h-8 bg-green-500 rounded-lg flex items-center justify-center">
-            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"></path>
-            </svg>
-          </div>
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Meilleur mois</h3>
-        </div>
-        <div class="text-xl font-bold text-green-600 dark:text-green-400 mb-1"><span class="amount-value">{{ best_month.balance|floatformat:0 }} €</span></div>
-        <div class="text-xs text-gray-600 dark:text-gray-400">{{ best_month.label }}</div>
+      <div class="carte carte-corps">
+        <p class="kpi-libelle">Meilleur mois</p>
+        <p class="kpi-valeur"><span class="amount-value">{{ best_month.balance|floatformat:0 }} €</span></p>
+        <p class="kpi-ecart">{{ best_month.label }}</p>
       </div>
       {% endif %}
-
-      <!-- Pire mois -->
       {% if worst_month %}
-      <div class="bg-gradient-to-br from-orange-50 dark:from-orange-900/30 to-red-50 dark:to-red-900/30 rounded-xl p-4 border border-orange-200 dark:border-orange-800">
-        <div class="flex items-center gap-2 mb-2">
-          <div class="w-8 h-8 bg-orange-500 rounded-lg flex items-center justify-center">
-            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-            </svg>
-          </div>
-          <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Pire mois</h3>
-        </div>
-        <div class="text-xl font-bold text-orange-600 dark:text-orange-400 mb-1"><span class="amount-value">{{ worst_month.balance|floatformat:0 }} €</span></div>
-        <div class="text-xs text-gray-600 dark:text-gray-400">{{ worst_month.label }}</div>
+      <div class="carte carte-corps">
+        <p class="kpi-libelle">Pire mois</p>
+        <p class="kpi-valeur"><span class="amount-value">{{ worst_month.balance|floatformat:0 }} €</span></p>
+        <p class="kpi-ecart">{{ worst_month.label }}</p>
       </div>
       {% endif %}
     </div>
 
-    <!-- Projection et comparaison détaillée -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-      <!-- Projection mois suivant -->
-      <div class="bg-gradient-to-br from-purple-50 dark:from-purple-900/30 to-pink-50 dark:to-pink-900/30 rounded-xl p-5 border border-purple-200 dark:border-purple-800">
-        <div class="flex items-center gap-2 mb-4">
-          <div class="w-10 h-10 bg-purple-500 rounded-lg flex items-center justify-center">
-            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path>
-            </svg>
-          </div>
-          <h3 class="text-base font-bold text-gray-900 dark:text-white">Projection mois suivant</h3>
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-4">
+      <div class="carte">
+        <div class="carte-entete">
+          <h3 class="carte-titre">Projection mois suivant</h3>
+          <span class="text-xs text-ink-3">Moyenne des 3 derniers mois</span>
         </div>
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <span class="text-sm text-gray-600 dark:text-gray-400">Revenus estimés</span>
-            <span class="text-lg font-semibold text-green-600 dark:text-green-400 amount-value">{{ projected_income|floatformat:0 }} €</span>
-          </div>
-          <div class="flex items-center justify-between">
-            <span class="text-sm text-gray-600 dark:text-gray-400">Dépenses estimées</span>
-            <span class="text-lg font-semibold text-red-600 dark:text-red-400 amount-value">{{ projected_expenses|floatformat:0 }} €</span>
-          </div>
-          <div class="pt-3 border-t border-purple-200 dark:border-purple-800">
-            <div class="flex items-center justify-between">
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Balance prévue</span>
-              <span class="text-xl font-bold {% if projected_balance >= 0 %}text-purple-600 dark:text-purple-400{% else %}text-red-600 dark:text-red-400{% endif %} amount-value">
-                {% if projected_balance >= 0 %}+{% endif %}{{ projected_balance|floatformat:0 }} €
-              </span>
-            </div>
-          </div>
-        </div>
-        <div class="mt-3 text-xs text-gray-500 dark:text-gray-400 italic">
-          Basé sur la moyenne des 3 derniers mois
+        <div class="carte-corps space-y-3">
+          <div class="ligne-valeur"><span>Revenus estimés</span><span class="amount-value">+{{ projected_income|floatformat:0 }} €</span></div>
+          <div class="ligne-valeur"><span>Dépenses estimées</span><span class="amount-value">{{ projected_expenses|floatformat:0 }} €</span></div>
+          <div class="filet"></div>
+          <div class="ligne-valeur font-semibold"><span class="text-ink">Balance prévue</span><span class="amount-value">{% if projected_balance >= 0 %}+{% endif %}{{ projected_balance|floatformat:0 }} €</span></div>
         </div>
       </div>
 
-      <!-- Comparaison avec moyennes -->
-      <div class="bg-gradient-to-br from-gray-50 dark:from-gray-800 to-slate-50 rounded-xl p-5 border border-gray-200 dark:border-gray-700">
-        <div class="flex items-center gap-2 mb-4">
-          <div class="w-10 h-10 bg-slate-600 rounded-lg flex items-center justify-center">
-            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
-            </svg>
-          </div>
-          <h3 class="text-base font-bold text-gray-900 dark:text-white">Période vs Moyenne 6 mois</h3>
+      <div class="carte">
+        <div class="carte-entete">
+          <h3 class="carte-titre">Période vs moyenne 6 mois</h3>
+          {% if stats_period_balance >= avg_6m_balance %}<span class="etat etat-ok">Meilleur que la moyenne</span>{% else %}<span class="etat etat-warn">Moins bon que la moyenne</span>{% endif %}
         </div>
-        <div class="space-y-3">
-          <div class="flex items-center justify-between">
-            <span class="text-sm text-gray-600 dark:text-gray-400">Revenus</span>
-            <div class="text-right">
-              <div class="text-lg font-semibold text-gray-900 dark:text-white amount-value">{{ income|floatformat:0 }} €</div>
-              <div class="text-xs {% if income >= avg_6m_income %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %} amount-value">
-                {% if income >= avg_6m_income %}+{% endif %}{{ income|floatformat:0|add:"-"|add:avg_6m_income|floatformat:0 }} € (moy: {{ avg_6m_income|floatformat:0 }} €)
-              </div>
-            </div>
+        <div class="carte-corps space-y-3">
+          <div class="ligne-valeur">
+            <span>Revenus</span>
+            <span class="text-right"><span class="amount-value">{{ income|floatformat:0 }} €</span>
+              <span class="block text-xs text-ink-3 amount-value">{% with moins=avg_6m_income|mul:-1 %}{% if income >= avg_6m_income %}+{% endif %}{{ income|add:moins|floatformat:0 }}{% endwith %} € (moy : {{ avg_6m_income|floatformat:0 }} €)</span></span>
           </div>
-          <div class="flex items-center justify-between">
-            <span class="text-sm text-gray-600 dark:text-gray-400">Dépenses</span>
-            <div class="text-right">
-              <div class="text-lg font-semibold text-gray-900 dark:text-white amount-value">{{ stats_expenses|floatformat:0 }} €</div>
-              <div class="text-xs {% if stats_expenses <= avg_6m_expenses %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %} amount-value">
-                {% if stats_expenses > avg_6m_expenses %}+{% endif %}{{ stats_expenses|floatformat:0|add:"-"|add:avg_6m_expenses|floatformat:0 }} € (moy: {{ avg_6m_expenses|floatformat:0 }} €)
-              </div>
-            </div>
-          </div>
-          <div class="pt-3 border-t border-gray-200 dark:border-gray-700">
-            <div class="flex items-center justify-between">
-              <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Différence</span>
-              <div class="text-right">
-                <div class="text-xl font-bold {% if stats_period_balance >= avg_6m_balance %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %}">
-                  {% if stats_period_balance >= avg_6m_balance %}Meilleur{% else %}Moins bon{% endif %}
-                </div>
-                <div class="text-xs text-gray-600 dark:text-gray-400">que la moyenne</div>
-              </div>
-            </div>
+          <div class="ligne-valeur">
+            <span>Dépenses</span>
+            <span class="text-right"><span class="amount-value">{{ stats_expenses|floatformat:0 }} €</span>
+              <span class="block text-xs text-ink-3 amount-value">{% with moins=avg_6m_expenses|mul:-1 %}{% if stats_expenses > avg_6m_expenses %}+{% endif %}{{ stats_expenses|add:moins|floatformat:0 }}{% endwith %} € (moy : {{ avg_6m_expenses|floatformat:0 }} €)</span></span>
           </div>
         </div>
       </div>
     </div>
-  </div>
+  </section>
 
-  <!-- Diagramme de Sankey - Flux de cashflow -->
-  <div class="mb-8">
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-bold text-gray-900 dark:text-white">Flux de trésorerie (Cashflow)</h2>
-        <div class="flex items-center gap-6">
-          <div class="text-right">
-            <div class="text-xs text-gray-500 dark:text-gray-400">Revenus</div>
-            <div class="text-lg font-bold text-green-600 dark:text-green-400 amount-value" id="sankey-total-income">{{ income|floatformat:2 }} €</div>
-          </div>
-          <div class="text-right">
-            <div class="text-xs text-gray-500 dark:text-gray-400">Dépenses</div>
-            <div class="text-lg font-bold text-red-600 dark:text-red-400 amount-value" id="sankey-total-expenses">{{ expenses|floatformat:2 }} €</div>
-          </div>
-          <div class="text-right">
-            <div class="text-xs text-gray-500 dark:text-gray-400">Balance</div>
-            <div class="text-lg font-bold {% if period_balance >= 0 %}text-green-600 dark:text-green-400{% else %}text-red-600 dark:text-red-400{% endif %} amount-value" id="sankey-balance">
-              {{ period_balance|floatformat:2 }} €
-            </div>
-          </div>
-        </div>
-      </div>
-      <div id="sankey-chart" class="text-gray-700 dark:text-gray-200" style="height: 600px; width: 100%;"></div>
-      <p class="text-xs text-gray-500 dark:text-gray-400 mt-4 text-center">💡 Assignez des catégories à vos transactions pour visualiser le flux de votre argent</p>
-      
-      <!-- Bouton pour afficher les détails -->
-      <div class="mt-6 text-center">
-        <button onclick="toggleSankeyDetails()" id="sankey-details-toggle" class="px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium transition-colors inline-flex items-center gap-2">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-          </svg>
-          Afficher les détails des transactions
+  <!-- Flux de trésorerie (Sankey) -->
+  <section class="carte mb-6" aria-labelledby="t-flux">
+    <div class="carte-entete flex-wrap">
+      <h2 class="carte-titre" id="t-flux">Flux de trésorerie</h2>
+      <dl class="flex flex-wrap gap-x-6 gap-y-1 text-right">
+        <div><dt class="text-xs text-ink-3">Revenus</dt><dd class="num text-sm font-semibold text-ink amount-value" id="sankey-total-income">+{{ income|floatformat:2 }} €</dd></div>
+        <div><dt class="text-xs text-ink-3">Dépenses</dt><dd class="num text-sm font-semibold text-ink amount-value" id="sankey-total-expenses">{{ expenses|floatformat:2 }} €</dd></div>
+        <div><dt class="text-xs text-ink-3">Balance</dt><dd class="num text-sm font-semibold text-ink amount-value" id="sankey-balance">{% if period_balance >= 0 %}+{% endif %}{{ period_balance|floatformat:2 }} €</dd></div>
+      </dl>
+    </div>
+    <div class="carte-corps">
+      <div id="sankey-chart" class="sankey text-ink-2" style="height: 600px;"></div>
+      <p class="text-xs text-ink-3 mt-3 text-center">Assignez des catégories à vos transactions pour visualiser le flux de votre argent.</p>
+
+      <div class="mt-4 text-center">
+        <button type="button" onclick="toggleSankeyDetails()" id="sankey-details-toggle" class="btn btn-secondaire" aria-expanded="false" aria-controls="sankey-details-panel">
+          {% include "graphite/icone.html" with nom="chevron-bas" only %}<span id="sankey-details-label">Afficher les détails des transactions</span>
         </button>
       </div>
-      
-      <!-- Panneau de détails (caché par défaut) -->
-      <div id="sankey-details-panel" class="hidden mt-6 border-t border-gray-200 dark:border-gray-700 pt-6">
+
+      <div id="sankey-details-panel" class="hidden mt-6 pt-6 border-t border-line">
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <!-- Revenus -->
           <div>
-            <h3 class="text-lg font-bold text-green-600 dark:text-green-400 mb-4 flex items-center gap-2">
-              <span class="text-2xl">💰</span>
-              Revenus par catégorie
-            </h3>
-            <div id="sankey-income-details" class="space-y-4">
-              <!-- Rempli par JavaScript -->
-            </div>
+            <h3 class="carte-titre mb-3">Revenus par catégorie</h3>
+            <div id="sankey-income-details" class="space-y-3"></div>
           </div>
-          
-          <!-- Dépenses -->
           <div>
-            <h3 class="text-lg font-bold text-red-600 dark:text-red-400 mb-4 flex items-center gap-2">
-              <span class="text-2xl">💸</span>
-              Dépenses par catégorie
-            </h3>
-            <div id="sankey-expense-details" class="space-y-4">
-              <!-- Rempli par JavaScript -->
-            </div>
+            <h3 class="carte-titre mb-3">Dépenses par catégorie</h3>
+            <div id="sankey-expense-details" class="space-y-3"></div>
           </div>
         </div>
       </div>
     </div>
-  </div>
+  </section>
 
   <!-- Graphiques -->
-  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-8">
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 xl:col-span-2">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-bold text-gray-900 dark:text-white">Évolution sur 6 mois</h2>
-        <span class="text-xs text-gray-500 dark:text-gray-400">Montants en euros</span>
+  <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-4">
+    <section class="carte xl:col-span-2 min-w-0" aria-labelledby="t-histo">
+      <div class="carte-entete">
+        <h2 class="carte-titre" id="t-histo">Évolution sur 6 mois</h2>
+        <span class="text-xs text-ink-3">Montants en euros</span>
       </div>
-      <canvas id="history-chart" height="80"></canvas>
-    </div>
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-bold text-gray-900 dark:text-white">Catégories principales</h2>
-        <span class="text-xs text-gray-500 dark:text-gray-400">Dépenses</span>
+      <div class="carte-corps"><div class="graphique h-72"><canvas id="history-chart" role="img" aria-label="Revenus, dépenses et solde des six derniers mois"></canvas></div></div>
+    </section>
+    <section class="carte min-w-0" aria-labelledby="t-cat">
+      <div class="carte-entete">
+        <h2 class="carte-titre" id="t-cat">Catégories principales</h2>
+        <span class="text-xs text-ink-3">Dépenses</span>
       </div>
-      <canvas id="category-chart" height="80"></canvas>
-    </div>
+      <div class="carte-corps"><div class="graphique h-72"><canvas id="category-chart" role="img" aria-label="Dépenses par catégorie"></canvas></div></div>
+    </section>
   </div>
 
-  <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-6 xl:col-span-2">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-bold text-gray-900 dark:text-white">Dépenses quotidiennes</h2>
-        <span class="text-xs text-gray-500 dark:text-gray-400">Sur la période</span>
-      </div>
-      <canvas id="daily-chart" height="60"></canvas>
+  <section class="carte min-w-0" aria-labelledby="t-jour">
+    <div class="carte-entete">
+      <h2 class="carte-titre" id="t-jour">Dépenses quotidiennes</h2>
+      <span class="text-xs text-ink-3">Sur la période</span>
     </div>
-  </div>
+    <div class="carte-corps"><div class="graphique h-56"><canvas id="daily-chart" role="img" aria-label="Dépenses jour par jour sur la période"></canvas></div></div>
+  </section>
 
   {{ history_chart|json_script:"history-data" }}
   {{ category_chart|json_script:"category-data" }}
@@ -754,559 +425,354 @@
   {{ sankey_data|json_script:"sankey-data" }}
   {{ sankey_details|json_script:"sankey-details" }}
 
-  <script>
-    // Fonction pour masquer/afficher les montants
-    function toggleAmounts() {
-      const body = document.body;
-      const eyeOpen = document.getElementById('eyeOpenIcon');
-      const eyeClosed = document.getElementById('eyeClosedIcon');
-      const isHidden = body.classList.toggle('amounts-hidden');
-      
-      eyeOpen.classList.toggle('hidden', isHidden);
-      eyeClosed.classList.toggle('hidden', !isHidden);
-      
-      localStorage.setItem('hideAmounts', isHidden ? 'true' : 'false');
-    }
-    
-    // Charger la préférence au démarrage
-    document.addEventListener('DOMContentLoaded', function() {
-      const hideAmounts = localStorage.getItem('hideAmounts') === 'true';
-      if (hideAmounts) {
-        document.body.classList.add('amounts-hidden');
-        document.getElementById('eyeOpenIcon').classList.add('hidden');
-        document.getElementById('eyeClosedIcon').classList.remove('hidden');
-      }
-    });
+  <!-- Mise à jour de la valorisation -->
+  <div id="valuationModal" class="modale hidden" role="dialog" aria-modal="true" aria-labelledby="t-valo">
+    <div class="modale-boite max-w-md">
+      <div class="modale-entete">
+        <h2 class="carte-titre" id="t-valo">Mettre à jour la valorisation</h2>
+        <button type="button" onclick="closeValuationModal()" class="btn btn-discret btn-icone" aria-label="Fermer">{% include "graphite/icone.html" with nom="fermer" only %}</button>
+      </div>
+      <form id="valuationForm" onsubmit="submitValuation(event)" class="carte-corps sm:p-6 space-y-4">
+        <div id="valuationError" class="hidden message message-crit" role="alert"></div>
+        <div id="valuationSuccess" class="hidden message message-ok"></div>
 
+        <div>
+          <label for="valuation_account" class="champ-libelle">Compte d'investissement</label>
+          <select id="valuation_account" required class="champ">
+            <option value="">Sélectionnez un compte</option>
+            {% for account in investment_accounts %}
+            <option value="{{ account.id }}">{{ account.name }} ({{ account.provider }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label for="valuation_amount" class="champ-libelle">Valorisation actuelle (€)</label>
+          <input type="number" id="valuation_amount" step="0.01" min="0" required placeholder="Ex : 5420.50" class="champ num">
+        </div>
+        <div>
+          <label for="valuation_date" class="champ-libelle">Date de la valorisation</label>
+          <input type="date" id="valuation_date" required class="champ">
+        </div>
+        <p class="champ-aide">Cette valorisation sera utilisée pour calculer votre plus-value et votre performance.</p>
+        <div class="flex items-center justify-end gap-2 pt-2">
+          <button type="button" onclick="closeValuationModal()" class="btn btn-secondaire">Annuler</button>
+          <button type="submit" id="submitValuationBtn" class="btn btn-principal">Mettre à jour</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const el = Finance.el;
+    const couleur = Finance.couleur;
+
+    // ---------------------------------------------------------------
+    // Montants masquables
+    // ---------------------------------------------------------------
+    function appliquerMasque(masque) {
+      document.body.classList.toggle('amounts-hidden', masque);
+      const btn = document.getElementById('toggleAmountsBtn');
+      btn.setAttribute('aria-pressed', String(masque));
+      document.getElementById('toggleAmountsLabel').textContent = masque ? 'Afficher les montants' : 'Masquer les montants';
+    }
+    function toggleAmounts() {
+      const masque = !document.body.classList.contains('amounts-hidden');
+      appliquerMasque(masque);
+      try { localStorage.setItem('hideAmounts', masque ? 'true' : 'false'); } catch (_) {}
+    }
+    try { if (localStorage.getItem('hideAmounts') === 'true') appliquerMasque(true); } catch (_) {}
+
+    // ---------------------------------------------------------------
+    // Graphiques : couleurs lues sur les jetons CSS, redessinées au changement de thème
+    // ---------------------------------------------------------------
     const historyData = JSON.parse(document.getElementById('history-data').textContent);
     const categoryData = JSON.parse(document.getElementById('category-data').textContent);
     const dailyData = JSON.parse(document.getElementById('daily-data').textContent);
+    const euros = value => `${value} €`;
 
-    // Couleurs des graphiques selon le thème (re-calculées au basculement).
-    function chartPalette() {
-      const dark = document.documentElement.classList.contains('dark');
+    function palette() {
       return {
-        text: dark ? '#d1d5db' : '#4b5563',
-        grid: dark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)',
-        tooltip: dark ? 'rgba(17, 24, 39, 0.95)' : 'rgba(0, 0, 0, 0.8)',
+        texte: couleur('ink-2'),
+        discret: couleur('ink-3'),
+        grille: couleur('line'),
+        accent: couleur('accent'),
+        accentPale: couleur('accent', 0.12),
+        encre: couleur('ink-2'),
+        encreDiscrete: couleur('ink-3'),
+        bulle: couleur('surface'),
+        bulleBord: couleur('line-strong'),
+        bulleTexte: couleur('ink'),
       };
     }
-    Chart.defaults.color = chartPalette().text;
 
-    // Configuration commune pour les graphiques
-    const chartOptions = {
-      responsive: true,
-      maintainAspectRatio: true,
-      plugins: {
-        legend: {
-          position: 'bottom',
-          labels: {
-            padding: 15,
-            usePointStyle: true,
-          }
-        },
-        tooltip: {
-          backgroundColor: chartPalette().tooltip,
-          padding: 12,
-          titleFont: { size: 14 },
-          bodyFont: { size: 13 },
-        }
-      }
-    };
-
-    // Graphique d'évolution
-    const historyCtx = document.getElementById('history-chart');
-    new Chart(historyCtx, {
-      type: 'line',
-      data: {
-        labels: historyData.labels,
-        datasets: [
-          {
-            label: 'Revenus',
-            data: historyData.income,
-            borderColor: '#22c55e',
-            backgroundColor: 'rgba(34,197,94,0.1)',
-            tension: 0.4,
-            fill: true,
-            pointRadius: 4,
-            pointHoverRadius: 6,
-          },
-          {
-            label: 'Dépenses',
-            data: historyData.expenses,
-            borderColor: '#ef4444',
-            backgroundColor: 'rgba(239,68,68,0.1)',
-            tension: 0.4,
-            fill: true,
-            pointRadius: 4,
-            pointHoverRadius: 6,
-          },
-          {
-            label: 'Solde',
-            data: historyData.balance,
-            borderColor: '#6366f1',
-            backgroundColor: 'rgba(99,102,241,0.1)',
-            tension: 0.4,
-            fill: false,
-            pointRadius: 4,
-            pointHoverRadius: 6,
-          }
-        ]
-      },
-      options: {
-        ...chartOptions,
-        scales: {
-          y: {
-            beginAtZero: true,
-            ticks: {
-              callback: value => `${value} €`
-            },
-            grid: {
-              color: chartPalette().grid
-            }
-          },
-          x: {
-            grid: {
-              display: false
-            }
-          }
-        }
-      }
-    });
-
-    // Graphique des catégories
-    const categoryCtx = document.getElementById('category-chart');
-    new Chart(categoryCtx, {
-      type: 'doughnut',
-      data: {
-        labels: categoryData.labels,
-        datasets: [{
-          label: 'Dépenses',
-          data: categoryData.values,
-          backgroundColor: [
-            '#6366f1', '#22c55e', '#f97316', '#a855f7',
-            '#ef4444', '#14b8a6', '#facc15', '#8b5cf6'
-          ],
-          borderWidth: 0,
-        }]
-      },
-      options: {
-        ...chartOptions,
+    function optionsCommunes(p) {
+      return {
+        responsive: true,
+        maintainAspectRatio: false,
         plugins: {
-          ...chartOptions.plugins,
+          legend: { position: 'bottom', labels: { padding: 15, usePointStyle: true, color: p.texte } },
           tooltip: {
-            ...chartOptions.plugins.tooltip,
-            callbacks: {
-              label: context => `${context.label}: ${context.parsed} €`
-            }
-          }
-        }
-      }
-    });
-
-    // Graphique quotidien
-    const dailyCtx = document.getElementById('daily-chart');
-    new Chart(dailyCtx, {
-      type: 'bar',
-      data: {
-        labels: dailyData.labels,
-        datasets: [{
-          label: 'Dépenses quotidiennes',
-          data: dailyData.values,
-          backgroundColor: '#6366f1',
-          borderRadius: 8,
-          borderSkipped: false,
-        }]
-      },
-      options: {
-        ...chartOptions,
-        plugins: {
-          ...chartOptions.plugins,
-          legend: {
-            display: false
-          }
-        },
-        scales: {
-          y: {
-            beginAtZero: true,
-            ticks: {
-              callback: value => `${value} €`
-            },
-            grid: {
-              color: chartPalette().grid
-            }
+            backgroundColor: p.bulle, borderColor: p.bulleBord, borderWidth: 1,
+            titleColor: p.bulleTexte, bodyColor: p.bulleTexte,
+            padding: 10, titleFont: { size: 13 }, bodyFont: { size: 12 },
           },
-          x: {
-            grid: {
-              display: false
-            }
-          }
-        }
-      }
-    });
-
-    window.addEventListener('themechange', () => {
-      const p = chartPalette();
-      Chart.defaults.color = p.text;
-      Object.values(Chart.instances).forEach(chart => {
-        const y = chart.options.scales && chart.options.scales.y;
-        if (y && y.grid) y.grid.color = p.grid;
-        if (chart.options.plugins && chart.options.plugins.tooltip) chart.options.plugins.tooltip.backgroundColor = p.tooltip;
-        chart.update('none');
-      });
-    });
-
-    // Diagramme de Sankey
-    const sankeyData = JSON.parse(document.getElementById('sankey-data').textContent);
-    console.log('Sankey Data:', sankeyData);
-    console.log('Sankey Data length:', sankeyData ? sankeyData.length : 0);
-    
-    if (sankeyData && sankeyData.length > 0) {
-      console.log('Début de la création du diagramme Sankey');
-      
-      try {
-        // Vérifier que d3.sankey est disponible
-        if (typeof d3.sankey === 'undefined') {
-          console.error('d3.sankey n\'est pas chargé !');
-          document.getElementById('sankey-chart').innerHTML = '<div class="flex items-center justify-center h-full text-red-500"><p>Erreur : Bibliothèque D3 Sankey non chargée</p></div>';
-        } else {
-        
-        // Préparer les données pour D3 Sankey
-        const nodes = [];
-        const nodeMap = new Map();
-        
-        // Extraire tous les nœuds uniques
-        sankeyData.forEach(link => {
-          if (!nodeMap.has(link.source)) {
-            nodeMap.set(link.source, nodes.length);
-            nodes.push({ name: link.source });
-          }
-          if (!nodeMap.has(link.target)) {
-            nodeMap.set(link.target, nodes.length);
-            nodes.push({ name: link.target });
-          }
-        });
-        
-        console.log('Nodes:', nodes);
-        console.log('Node Map:', nodeMap);
-        
-        // Créer les liens en utilisant directement les noms (car on a défini nodeId)
-        const links = sankeyData.map(link => ({
-          source: link.source,
-          target: link.target,
-          value: link.value
-        }));
-        
-        console.log('Links:', links);
-        
-        // Configuration du Sankey
-        const margin = { top: 10, right: 10, bottom: 10, left: 10 };
-        const container = document.getElementById('sankey-chart');
-        const width = container.clientWidth - margin.left - margin.right;
-        const height = 600 - margin.top - margin.bottom;
-        
-        // Créer le SVG
-        const svg = d3.select('#sankey-chart')
-          .append('svg')
-          .attr('width', width + margin.left + margin.right)
-          .attr('height', height + margin.top + margin.bottom)
-          .append('g')
-          .attr('transform', `translate(${margin.left},${margin.top})`);
-        
-        // Générateur de Sankey - laisser d3-sankey gérer les tailles naturellement
-        const sankey = d3.sankey()
-          .nodeWidth(20)
-          .nodePadding(25) // Espacement généreux entre les nœuds
-          .extent([[0, 0], [width, height]])
-          .nodeId(d => d.name);
-        
-        // Générer le graphe - d3-sankey calculera automatiquement les bonnes proportions
-        const graph = sankey({
-          nodes: nodes.map(d => Object.assign({}, d)),
-          links: links.map(d => Object.assign({}, d))
-        });
-        
-        // Fonction pour déterminer la couleur d'un nœud
-        const getNodeColor = (name) => {
-          if (name === 'Revenus') return '#6366f1'; // Bleu indigo pour le nœud central
-          if (name.startsWith('💰')) return '#10b981'; // Vert pour les sources de revenus
-          if (name.startsWith('💸')) return '#ef4444'; // Rouge pour les dépenses
-          return '#94a3b8'; // Gris par défaut
-        };
-        
-        // Dessiner les liens
-        svg.append('g')
-          .selectAll('path')
-          .data(graph.links)
-          .join('path')
-          .attr('d', d3.sankeyLinkHorizontal())
-          .attr('stroke', d => {
-            // Couleur basée sur la source du lien
-            return getNodeColor(d.source.name);
-          })
-          .attr('stroke-width', d => Math.max(1, d.width))
-          .attr('fill', 'none')
-          .attr('opacity', 0.4)
-          .append('title')
-          .text(d => `${d.source.name} → ${d.target.name}\n${d.value.toFixed(2)} €`);
-        
-        // Dessiner les nœuds
-        const node = svg.append('g')
-          .selectAll('g')
-          .data(graph.nodes)
-          .join('g');
-        
-        // Calculer le total pour déterminer les petites catégories
-        const totalValue = graph.nodes.reduce((sum, d) => {
-          if (d.name !== 'Revenus') sum += d.value;
-          return sum;
-        }, 0);
-        const threshold = totalValue * 0.01; // 1% du total
-        const minHoverHeight = 30; // Hauteur minimale pour le survol
-        
-        // Rectangle visible du nœud (taille proportionnelle)
-        node.append('rect')
-          .attr('class', 'node-rect')
-          .attr('x', d => d.x0)
-          .attr('y', d => d.y0)
-          .attr('height', d => d.y1 - d.y0)
-          .attr('width', d => d.x1 - d.x0)
-          .attr('fill', d => getNodeColor(d.name))
-          .attr('opacity', 0.9)
-          .attr('rx', 3)
-          .attr('ry', 3);
-        
-        // Rectangle invisible élargi pour les petits nœuds (pour faciliter le survol)
-        node.append('rect')
-          .attr('class', 'node-hover-area')
-          .attr('x', d => d.x0)
-          .attr('y', d => {
-            const currentHeight = d.y1 - d.y0;
-            if (currentHeight < minHoverHeight) {
-              // Centrer la zone de survol sur le petit nœud
-              return d.y0 - (minHoverHeight - currentHeight) / 2;
-            }
-            return d.y0;
-          })
-          .attr('height', d => {
-            const currentHeight = d.y1 - d.y0;
-            return Math.max(currentHeight, minHoverHeight);
-          })
-          .attr('width', d => d.x1 - d.x0)
-          .attr('fill', 'transparent')
-          .attr('pointer-events', 'all')
-          .on('mouseenter', function(event, d) {
-            // Afficher le nom complet au survol pour les petites catégories
-            const nameLabel = d3.select(this.parentNode).select('.node-name-label');
-            if (nameLabel.classed('hidden-label')) {
-              nameLabel.style('opacity', 1);
-            }
-          })
-          .on('mouseleave', function(event, d) {
-            // Cacher le nom pour les petites catégories
-            const nameLabel = d3.select(this.parentNode).select('.node-name-label');
-            if (nameLabel.classed('hidden-label')) {
-              nameLabel.style('opacity', 0);
-            }
-          })
-          .append('title')
-          .text(d => `${d.name}\n${d.value.toFixed(2)} €`);
-        
-        // Ajouter les labels (nom de la catégorie)
-        node.append('text')
-          .attr('class', 'node-name-label')
-          .classed('hidden-label', d => d.value < threshold && d.name !== 'Revenus')
-          .attr('x', d => d.x0 < width / 2 ? d.x1 + 6 : d.x0 - 6)
-          .attr('y', d => (d.y1 + d.y0) / 2)
-          .attr('dy', '0.35em')
-          .attr('text-anchor', d => d.x0 < width / 2 ? 'start' : 'end')
-          .text(d => d.name)
-          .style('font-size', '12px')
-          .style('font-weight', d => d.name === 'Revenus' ? '700' : '500')
-          .style('fill', 'currentColor')
-          .style('opacity', d => (d.value < threshold && d.name !== 'Revenus') ? 0 : 1)
-          .style('transition', 'opacity 0.3s');
-        
-        // Ajouter les montants
-        node.append('text')
-          .attr('x', d => d.x0 < width / 2 ? d.x1 + 6 : d.x0 - 6)
-          .attr('y', d => (d.y1 + d.y0) / 2)
-          .attr('dy', d => {
-            // Si le nom est caché, centrer le montant, sinon le décaler
-            return (d.value < threshold && d.name !== 'Revenus') ? '0.35em' : '1.5em';
-          })
-          .attr('text-anchor', d => d.x0 < width / 2 ? 'start' : 'end')
-          .text(d => `${d.value.toFixed(0)} €`)
-          .style('font-size', '10px')
-          .style('font-weight', d => d.name === 'Revenus' ? '700' : '400')
-          .style('fill', '#6b7280');
-        
-        console.log('Diagramme Sankey créé avec succès');
-        }
-      } catch (error) {
-        console.error('Erreur lors de la création du diagramme Sankey:', error);
-        document.getElementById('sankey-chart').innerHTML = '<div class="flex items-center justify-center h-full text-red-500"><p>Erreur lors de la création du diagramme: ' + error.message + '</p></div>';
-      }
-    } else {
-      // Afficher un message si pas de données
-      console.log('Pas de données pour le Sankey');
-      document.getElementById('sankey-chart').innerHTML = '<div class="flex items-center justify-center h-full text-gray-500 dark:text-gray-400"><p>Aucune donnée à afficher. Assignez des catégories à vos transactions pour visualiser le flux de trésorerie.</p></div>';
+        },
+      };
     }
 
-    // Détails des transactions par catégorie
+    let graphiques = [];
+
+    function dessinerGraphiques() {
+      graphiques.forEach(g => g.destroy());
+      const p = palette();
+      Chart.defaults.color = p.texte;
+      Chart.defaults.font.family = getComputedStyle(document.documentElement).getPropertyValue('--f-sans');
+      const base = optionsCommunes(p);
+      const axes = {
+        y: { beginAtZero: true, ticks: { callback: euros, color: p.discret }, grid: { color: p.grille }, border: { color: p.grille } },
+        x: { grid: { display: false }, ticks: { color: p.discret }, border: { color: p.grille } },
+      };
+
+      graphiques = [
+        new Chart(document.getElementById('history-chart'), {
+          type: 'line',
+          data: {
+            labels: historyData.labels,
+            datasets: [
+              { label: 'Revenus', data: historyData.income, borderColor: p.encre, backgroundColor: p.encre, tension: 0.35, fill: false, pointRadius: 3, pointHoverRadius: 5, borderWidth: 1.75 },
+              { label: 'Dépenses', data: historyData.expenses, borderColor: p.encreDiscrete, backgroundColor: p.encreDiscrete, borderDash: [5, 4], tension: 0.35, fill: false, pointRadius: 3, pointHoverRadius: 5, borderWidth: 1.75 },
+              { label: 'Solde', data: historyData.balance, borderColor: p.accent, backgroundColor: p.accentPale, tension: 0.35, fill: true, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2.25 },
+            ],
+          },
+          options: { ...base, scales: axes },
+        }),
+        new Chart(document.getElementById('category-chart'), {
+          type: 'bar',
+          data: {
+            labels: categoryData.labels,
+            datasets: [{ label: 'Dépenses', data: categoryData.values, backgroundColor: p.accent, borderRadius: 4, borderSkipped: false, maxBarThickness: 18 }],
+          },
+          options: {
+            ...base,
+            indexAxis: 'y',
+            plugins: { ...base.plugins, legend: { display: false }, tooltip: { ...base.plugins.tooltip, callbacks: { label: context => `${context.label} : ${context.parsed.x} €` } } },
+            scales: {
+              x: { beginAtZero: true, ticks: { callback: euros, color: p.discret }, grid: { color: p.grille }, border: { color: p.grille } },
+              y: { grid: { display: false }, ticks: { color: p.texte }, border: { color: p.grille } },
+            },
+          },
+        }),
+        new Chart(document.getElementById('daily-chart'), {
+          type: 'bar',
+          data: {
+            labels: dailyData.labels,
+            datasets: [{ label: 'Dépenses quotidiennes', data: dailyData.values, backgroundColor: p.accent, borderRadius: 4, borderSkipped: false }],
+          },
+          options: { ...base, plugins: { ...base.plugins, legend: { display: false } }, scales: axes },
+        }),
+      ];
+    }
+
+    // ---------------------------------------------------------------
+    // Diagramme de Sankey
+    // ---------------------------------------------------------------
+    const sankeyData = JSON.parse(document.getElementById('sankey-data').textContent);
+    // Les nœuds portent un préfixe (« Entrée : », « Sortie : ») qui les rend uniques ; on ne l'affiche pas.
+    const PREFIXE_ENTREE = 'Entrée : ';
+    const PREFIXE_SORTIE = 'Sortie : ';
+    const nomAffiche = nom => nom.replace(PREFIXE_ENTREE, '').replace(PREFIXE_SORTIE, '');
+    const fmtEuros = (v, d) => v.toLocaleString('fr-FR', { minimumFractionDigits: d, maximumFractionDigits: d }) + ' €';
+
+    function messageSankey(conteneur, texte, niveau) {
+      const m = el('div', 'flex items-center justify-center h-full text-sm ' + (niveau === 'crit' ? 'text-ink' : 'text-ink-3'));
+      m.appendChild(el('p', 'max-w-md text-center', texte));
+      conteneur.replaceChildren(m);
+    }
+
+    function dessinerSankey() {
+      const container = document.getElementById('sankey-chart');
+      if (!sankeyData || sankeyData.length === 0) {
+        messageSankey(container, 'Aucune donnée à afficher. Assignez des catégories à vos transactions pour visualiser le flux de trésorerie.');
+        return;
+      }
+      if (typeof d3 === 'undefined' || typeof d3.sankey === 'undefined') {
+        messageSankey(container, 'Le diagramme ne peut pas s\'afficher : la bibliothèque D3 Sankey n\'est pas chargée. Les totaux ci-dessus restent justes.', 'crit');
+        return;
+      }
+      try {
+        container.replaceChildren();
+        const p = { accent: couleur('accent'), entree: couleur('ink-2'), sortie: couleur('ink-3'), discret: couleur('ink-3') };
+        const nodes = [];
+        const vus = new Set();
+        sankeyData.forEach(link => {
+          [link.source, link.target].forEach(nom => { if (!vus.has(nom)) { vus.add(nom); nodes.push({ name: nom }); } });
+        });
+        const links = sankeyData.map(link => ({ source: link.source, target: link.target, value: link.value }));
+
+        const margin = { top: 10, right: 10, bottom: 10, left: 10 };
+        // Sous 640 px, le diagramme garde une largeur lisible et défile dans son cadre.
+        const width = Math.max(container.clientWidth, 560) - margin.left - margin.right;
+        const height = 600 - margin.top - margin.bottom;
+
+        const svg = d3.select(container).append('svg')
+          .attr('width', width + margin.left + margin.right)
+          .attr('height', height + margin.top + margin.bottom)
+          .attr('role', 'img')
+          .attr('aria-label', 'Flux de trésorerie : revenus par catégorie vers dépenses par catégorie')
+          .append('g')
+          .attr('transform', `translate(${margin.left},${margin.top})`);
+
+        const graph = d3.sankey()
+          .nodeWidth(14)
+          .nodePadding(22)
+          .extent([[0, 0], [width, height]])
+          .nodeId(d => d.name)({ nodes: nodes.map(d => Object.assign({}, d)), links: links.map(d => Object.assign({}, d)) });
+
+        const couleurNoeud = nom => {
+          if (nom === 'Revenus') return p.accent;
+          if (nom.startsWith(PREFIXE_ENTREE)) return p.entree;
+          return p.sortie;
+        };
+
+        svg.append('g').selectAll('path').data(graph.links).join('path')
+          .attr('d', d3.sankeyLinkHorizontal())
+          .attr('stroke', d => d.source.name === 'Revenus' ? p.sortie : p.accent)
+          .attr('stroke-width', d => Math.max(1, d.width))
+          .attr('fill', 'none')
+          .attr('opacity', 0.28)
+          .append('title')
+          .text(d => `${nomAffiche(d.source.name)} vers ${nomAffiche(d.target.name)}\n${fmtEuros(d.value, 2)}`);
+
+        const node = svg.append('g').selectAll('g').data(graph.nodes).join('g');
+        const totalValue = graph.nodes.reduce((s, d) => d.name !== 'Revenus' ? s + d.value : s, 0);
+        const threshold = totalValue * 0.01;
+        const minHoverHeight = 30;
+        const petit = d => d.value < threshold && d.name !== 'Revenus';
+
+        node.append('rect')
+          .attr('x', d => d.x0).attr('y', d => d.y0)
+          .attr('height', d => Math.max(1, d.y1 - d.y0)).attr('width', d => d.x1 - d.x0)
+          .attr('fill', d => couleurNoeud(d.name)).attr('rx', 2);
+
+        // Zone de survol élargie pour les petits nœuds
+        node.append('rect')
+          .attr('x', d => d.x0)
+          .attr('y', d => { const h = d.y1 - d.y0; return h < minHoverHeight ? d.y0 - (minHoverHeight - h) / 2 : d.y0; })
+          .attr('height', d => Math.max(d.y1 - d.y0, minHoverHeight))
+          .attr('width', d => d.x1 - d.x0)
+          .attr('fill', 'transparent').attr('pointer-events', 'all')
+          .on('mouseenter', function () { const l = d3.select(this.parentNode).select('.node-name-label'); if (l.classed('hidden-label')) l.style('opacity', 1); })
+          .on('mouseleave', function () { const l = d3.select(this.parentNode).select('.node-name-label'); if (l.classed('hidden-label')) l.style('opacity', 0); })
+          .append('title')
+          .text(d => `${nomAffiche(d.name)}\n${fmtEuros(d.value, 2)}`);
+
+        const xTexte = d => d.x0 < width / 2 ? d.x1 + 6 : d.x0 - 6;
+        const ancre = d => d.x0 < width / 2 ? 'start' : 'end';
+
+        node.append('text')
+          .attr('class', 'node-name-label').classed('hidden-label', petit)
+          .attr('x', xTexte).attr('y', d => (d.y1 + d.y0) / 2).attr('dy', '0.35em').attr('text-anchor', ancre)
+          .text(d => nomAffiche(d.name))
+          .style('font-size', '12px').style('font-weight', d => d.name === 'Revenus' ? '600' : '500')
+          .style('fill', 'currentColor').style('opacity', d => petit(d) ? 0 : 1).style('transition', 'opacity 0.3s');
+
+        node.append('text')
+          .attr('x', xTexte).attr('y', d => (d.y1 + d.y0) / 2).attr('dy', d => petit(d) ? '0.35em' : '1.5em').attr('text-anchor', ancre)
+          .attr('class', 'amount-value')
+          .text(d => fmtEuros(d.value, 0))
+          .style('font-size', '10px').style('font-family', 'var(--f-mono)')
+          .style('fill', p.discret);
+      } catch (error) {
+        console.error('Erreur lors de la création du diagramme Sankey:', error);
+        messageSankey(container, 'Le diagramme n\'a pas pu être dessiné : ' + error.message + '. Les totaux ci-dessus restent justes.', 'crit');
+      }
+    }
+
+    // ---------------------------------------------------------------
+    // Détails des transactions par catégorie (DOM construit sans innerHTML)
+    // ---------------------------------------------------------------
     const sankeyDetails = JSON.parse(document.getElementById('sankey-details').textContent);
-    console.log('Sankey Details:', sankeyDetails);
-    
-    // Fonction pour afficher/masquer les détails
+
     function toggleSankeyDetails() {
       const panel = document.getElementById('sankey-details-panel');
       const button = document.getElementById('sankey-details-toggle');
-      const icon = button.querySelector('svg');
-      
-      if (panel.classList.contains('hidden')) {
-        // Remplir le panneau si première ouverture
-        if (!panel.dataset.loaded) {
-          populateSankeyDetails();
-          panel.dataset.loaded = 'true';
-        }
-        
-        panel.classList.remove('hidden');
-        button.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg> Masquer les détails';
-      } else {
-        panel.classList.add('hidden');
-        button.innerHTML = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg> Afficher les détails des transactions';
+      const ouvrir = panel.classList.contains('hidden');
+      if (ouvrir && !panel.dataset.loaded) {
+        populateSankeyDetails();
+        panel.dataset.loaded = 'true';
       }
+      panel.classList.toggle('hidden', !ouvrir);
+      button.setAttribute('aria-expanded', String(ouvrir));
+      document.getElementById('sankey-details-label').textContent = ouvrir ? 'Masquer les détails' : 'Afficher les détails des transactions';
     }
-    
-    // Fonction pour remplir le panneau de détails
+
+    function carteCategorie(category, signe) {
+      const carte = el('div', 'rounded-card border border-line bg-sunken p-3');
+      const tete = el('div', 'flex justify-between items-baseline gap-3 mb-1');
+      tete.appendChild(el('h4', 'text-sm font-semibold text-ink', category.category));
+      tete.appendChild(el('span', 'num text-sm font-semibold text-ink amount-value', signe + category.total.toFixed(2) + ' €'));
+      carte.appendChild(tete);
+      carte.appendChild(el('p', 'text-xs text-ink-3 mb-2', category.count + ' transaction(s)'));
+      const liste = el('ul', 'divide-y divide-line');
+      category.transactions.slice(0, 5).forEach(tx => {
+        const li = el('li', 'flex justify-between items-start gap-3 py-1.5 text-xs');
+        const gauche = el('div', 'min-w-0');
+        const ligne = el('p', 'text-ink-2');
+        ligne.appendChild(el('span', 'num text-ink-3', tx.date));
+        ligne.appendChild(document.createTextNode(' · ' + tx.description));
+        gauche.appendChild(ligne);
+        gauche.appendChild(el('p', 'text-ink-3 mt-0.5', 'Compte : ' + tx.account));
+        li.appendChild(gauche);
+        li.appendChild(el('span', 'num text-ink whitespace-nowrap amount-value', (tx.amount > 0 ? '+' : '') + tx.amount.toFixed(2) + ' €'));
+        liste.appendChild(li);
+      });
+      carte.appendChild(liste);
+      if (category.count > 5) carte.appendChild(el('p', 'text-xs text-ink-3 mt-2', '… et ' + (category.count - 5) + ' autre(s) transaction(s)'));
+      return carte;
+    }
+
     function populateSankeyDetails() {
       const incomeContainer = document.getElementById('sankey-income-details');
       const expenseContainer = document.getElementById('sankey-expense-details');
-      
-      // Revenus
       if (sankeyDetails.income && sankeyDetails.income.length > 0) {
-        incomeContainer.innerHTML = sankeyDetails.income.map(category => {
-          const transactionsHtml = category.transactions.slice(0, 5).map(tx => 
-            `<div class="text-xs py-1 border-b border-gray-100 dark:border-gray-700">
-              <div class="flex justify-between items-start">
-                <div class="flex-1">
-                  <div>
-                    <span class="text-gray-500 dark:text-gray-400">${tx.date}</span> - 
-                    <span class="text-gray-700 dark:text-gray-300">${tx.description}</span>
-                  </div>
-                  <div class="text-gray-400 text-[10px] mt-0.5">
-                    Compte: ${tx.account}
-                  </div>
-                </div>
-                <span class="font-medium text-green-600 dark:text-green-400 ml-2 whitespace-nowrap">${tx.amount.toFixed(2)} €</span>
-              </div>
-            </div>`
-          ).join('');
-          
-          const moreText = category.count > 5 ? `<p class="text-xs text-gray-400 mt-2">... et ${category.count - 5} autre(s) transaction(s)</p>` : '';
-          
-          return `<div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-            <div class="flex justify-between items-center mb-3">
-              <h4 class="font-semibold text-gray-900 dark:text-white">${category.category}</h4>
-              <span class="text-sm font-bold text-green-600 dark:text-green-400">${category.total.toFixed(2)} €</span>
-            </div>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">${category.count} transaction(s)</p>
-            <div class="space-y-1">
-              ${transactionsHtml}
-            </div>
-            ${moreText}
-          </div>`;
-        }).join('');
+        incomeContainer.replaceChildren(...sankeyDetails.income.map(c => carteCategorie(c, '+')));
       } else {
-        incomeContainer.innerHTML = '<p class="text-gray-500 dark:text-gray-400 text-sm">Aucune transaction de revenus catégorisée</p>';
+        incomeContainer.replaceChildren(el('p', 'text-sm text-ink-3', 'Aucune transaction de revenus catégorisée'));
       }
-      
-      // Dépenses
       if (sankeyDetails.expenses && sankeyDetails.expenses.length > 0) {
-        expenseContainer.innerHTML = sankeyDetails.expenses.map(category => {
-          const transactionsHtml = category.transactions.slice(0, 5).map(tx => 
-            `<div class="text-xs py-1 border-b border-gray-100 dark:border-gray-700">
-              <div class="flex justify-between items-start">
-                <div class="flex-1">
-                  <div>
-                    <span class="text-gray-500 dark:text-gray-400">${tx.date}</span> - 
-                    <span class="text-gray-700 dark:text-gray-300">${tx.description}</span>
-                  </div>
-                  <div class="text-gray-400 text-[10px] mt-0.5">
-                    Compte: ${tx.account}
-                  </div>
-                </div>
-                <span class="font-medium text-red-600 dark:text-red-400 ml-2 whitespace-nowrap">${tx.amount.toFixed(2)} €</span>
-              </div>
-            </div>`
-          ).join('');
-          
-          const moreText = category.count > 5 ? `<p class="text-xs text-gray-400 mt-2">... et ${category.count - 5} autre(s) transaction(s)</p>` : '';
-          
-          return `<div class="bg-gray-50 dark:bg-gray-700/50 rounded-lg p-4 border border-gray-200 dark:border-gray-700">
-            <div class="flex justify-between items-center mb-3">
-              <h4 class="font-semibold text-gray-900 dark:text-white">${category.category}</h4>
-              <span class="text-sm font-bold text-red-600 dark:text-red-400">${category.total.toFixed(2)} €</span>
-            </div>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">${category.count} transaction(s)</p>
-            <div class="space-y-1">
-              ${transactionsHtml}
-            </div>
-            ${moreText}
-          </div>`;
-        }).join('');
+        expenseContainer.replaceChildren(...sankeyDetails.expenses.map(c => carteCategorie(c, '')));
       } else {
-        expenseContainer.innerHTML = '<p class="text-gray-500 dark:text-gray-400 text-sm">Aucune transaction de dépenses catégorisée</p>';
+        expenseContainer.replaceChildren(el('p', 'text-sm text-ink-3', 'Aucune transaction de dépenses catégorisée'));
       }
     }
 
-    // Toggle entre sélection rapide et période personnalisée
+    // ---------------------------------------------------------------
+    // Période : sélection rapide / personnalisée
+    // ---------------------------------------------------------------
     function togglePeriodMode(mode) {
-      const quickMode = document.getElementById('quickSelectMode');
-      const customMode = document.getElementById('customSelectMode');
-      const quickBtn = document.getElementById('quickSelectBtn');
-      const customBtn = document.getElementById('customSelectBtn');
-      
-      if (mode === 'quick') {
-        quickMode.classList.remove('hidden');
-        customMode.classList.add('hidden');
-        quickBtn.classList.add('bg-white', 'dark:bg-gray-800', 'text-primary', 'dark:text-primary-light', 'shadow-sm');
-        quickBtn.classList.remove('text-gray-600', 'dark:text-gray-400');
-        customBtn.classList.remove('bg-white', 'dark:bg-gray-800', 'text-primary', 'dark:text-primary-light', 'shadow-sm');
-        customBtn.classList.add('text-gray-600', 'dark:text-gray-400');
-      } else {
-        quickMode.classList.add('hidden');
-        customMode.classList.remove('hidden');
-        customBtn.classList.add('bg-white', 'dark:bg-gray-800', 'text-primary', 'dark:text-primary-light', 'shadow-sm');
-        customBtn.classList.remove('text-gray-600', 'dark:text-gray-400');
-        quickBtn.classList.remove('bg-white', 'dark:bg-gray-800', 'text-primary', 'dark:text-primary-light', 'shadow-sm');
-        quickBtn.classList.add('text-gray-600', 'dark:text-gray-400');
-      }
+      const rapide = mode === 'quick';
+      document.getElementById('quickSelectMode').classList.toggle('hidden', !rapide);
+      document.getElementById('customSelectMode').classList.toggle('hidden', rapide);
+      document.getElementById('quickSelectBtn').setAttribute('aria-pressed', String(rapide));
+      document.getElementById('customSelectBtn').setAttribute('aria-pressed', String(!rapide));
     }
 
-    // Définir le mois actuel (du 24 au 24)
+    // Mois actuel (du 24 au 24) : avant le 24, le mois en cours ; à partir du 24, le suivant.
     function setCurrentMonth() {
       const today = new Date();
-      const currentDay = today.getDate();
-      
-      // Si on est avant le 24, prendre le mois actuel
-      // Si on est le 24 ou après, prendre le mois suivant
-      let targetMonth;
-      if (currentDay >= 24) {
-        targetMonth = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-      } else {
-        targetMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-      }
-      
-      // Format YYYY-MM
-      const monthValue = targetMonth.getFullYear() + '-' + String(targetMonth.getMonth() + 1).padStart(2, '0');
-      document.getElementById('month').value = monthValue;
+      const targetMonth = today.getDate() >= 24
+        ? new Date(today.getFullYear(), today.getMonth() + 1, 1)
+        : new Date(today.getFullYear(), today.getMonth(), 1);
+      document.getElementById('month').value = targetMonth.getFullYear() + '-' + String(targetMonth.getMonth() + 1).padStart(2, '0');
       document.getElementById('periodForm').submit();
     }
 
-    // Modal de mise à jour de valorisation
+    // ---------------------------------------------------------------
+    // Modale de valorisation
+    // ---------------------------------------------------------------
     function openValuationModal() {
       document.getElementById('valuationModal').classList.remove('hidden');
+      document.getElementById('valuation_account').focus();
     }
 
     function closeValuationModal() {
@@ -1331,108 +797,78 @@
       return cookieValue;
     }
 
+    function afficherMessage(id, texte) {
+      const boite = document.getElementById(id);
+      boite.replaceChildren(Finance.icone(id === 'valuationError' ? 'crit' : 'ok'), el('p', 'flex-1', texte));
+      boite.classList.remove('hidden');
+    }
+
     async function submitValuation(event) {
       event.preventDefault();
-      
+
       const accountId = document.getElementById('valuation_account').value;
       const valuation = document.getElementById('valuation_amount').value;
       const date = document.getElementById('valuation_date').value;
-      
+
       if (!accountId || !valuation || !date) {
-        document.getElementById('valuationError').textContent = 'Veuillez remplir tous les champs';
-        document.getElementById('valuationError').classList.remove('hidden');
+        afficherMessage('valuationError', 'Veuillez remplir tous les champs');
         return;
       }
-      
+
       const submitBtn = document.getElementById('submitValuationBtn');
       submitBtn.disabled = true;
-      submitBtn.textContent = 'Mise à jour...';
-      
+      submitBtn.setAttribute('aria-busy', 'true');
+      submitBtn.textContent = 'Mise à jour en cours';
+
+      const relacher = () => {
+        submitBtn.disabled = false;
+        submitBtn.removeAttribute('aria-busy');
+        submitBtn.textContent = 'Mettre à jour';
+      };
+
       try {
         const response = await fetch('{% url "update_investment_valuation" %}', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': getCookie('csrftoken'),
-          },
-          body: JSON.stringify({
-            account_id: accountId,
-            valuation: parseFloat(valuation),
-            date: date,
-          }),
+          headers: { 'Content-Type': 'application/json', 'X-CSRFToken': getCookie('csrftoken') },
+          body: JSON.stringify({ account_id: accountId, valuation: parseFloat(valuation), date: date }),
         });
-        
         const data = await response.json();
-        
+
         if (response.ok) {
-          document.getElementById('valuationSuccess').textContent = data.message || 'Valorisation mise à jour avec succès';
-          document.getElementById('valuationSuccess').classList.remove('hidden');
+          afficherMessage('valuationSuccess', data.message || 'Valorisation mise à jour avec succès');
           document.getElementById('valuationError').classList.add('hidden');
-          
-          // Recharger la page après 1,5 seconde
-          setTimeout(() => {
-            window.location.reload();
-          }, 1500);
+          setTimeout(() => { window.location.reload(); }, 1500);
         } else {
-          document.getElementById('valuationError').textContent = data.error || 'Erreur lors de la mise à jour';
-          document.getElementById('valuationError').classList.remove('hidden');
+          afficherMessage('valuationError', data.error || 'Erreur lors de la mise à jour');
           document.getElementById('valuationSuccess').classList.add('hidden');
-          submitBtn.disabled = false;
-          submitBtn.textContent = 'Mettre à jour';
+          relacher();
         }
       } catch (error) {
-        document.getElementById('valuationError').textContent = 'Erreur réseau : ' + error.message;
-        document.getElementById('valuationError').classList.remove('hidden');
+        afficherMessage('valuationError', 'Erreur réseau : ' + error.message);
         document.getElementById('valuationSuccess').classList.add('hidden');
-        submitBtn.disabled = false;
-        submitBtn.textContent = 'Mettre à jour';
+        relacher();
       }
     }
 
-    // Fermer le modal avec Escape
     document.addEventListener('keydown', function(e) {
-      if (e.key === 'Escape') {
-        closeValuationModal();
-      }
+      if (e.key === 'Escape') closeValuationModal();
     });
 
-    // =========================================================
+    // ---------------------------------------------------------------
     // TRI (XIRR)
-    // =========================================================
-    const TYPE_COLORS = {
-      CTO: 'bg-blue-100 text-blue-800',
-      PEA: 'bg-green-100 text-green-800',
-      'PEA-PME': 'bg-teal-100 text-teal-800',
-      CRYPTO: 'bg-orange-100 text-orange-800',
-    };
-
-    function triColor(rate) {
-      if (rate === null) return 'text-gray-400';
-      return rate >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400';
-    }
-
+    // ---------------------------------------------------------------
     // Choisit quel taux mettre en avant : le rendement annualisé n'a vraiment de sens
     // qu'à partir d'environ un an d'historique. En dessous, le rendement « brut » sur
-    // la période exacte est moins trompeur (ex. -3.5% sur 6 semaines plutôt que -26% « annualisé »).
+    // la période exacte est moins trompeur (ex. -3.5 % sur 6 semaines plutôt que -26 % « annualisé »).
     function primaryRate(info, emphasizeAnnualized) {
       if (info.period_rate === null || info.period_days === null) {
         return { rate: info.rate, display: info.display, label: 'annualisé', secondary: null };
       }
       if (emphasizeAnnualized) {
         const diff = Math.abs(info.period_rate - info.rate) > 0.0005;
-        return {
-          rate: info.rate,
-          display: info.display,
-          label: 'annualisé',
-          secondary: diff ? `${info.period_display} sur ${info.period_days} j` : null,
-        };
+        return { rate: info.rate, display: info.display, label: 'annualisé', secondary: diff ? `${info.period_display} sur ${info.period_days} j` : null };
       }
-      return {
-        rate: info.period_rate,
-        display: info.period_display,
-        label: `sur la période (${info.period_days} j)`,
-        secondary: `${info.display} annualisé`,
-      };
+      return { rate: info.period_rate, display: info.period_display, label: `sur la période (${info.period_days} j)`, secondary: `${info.display} annualisé` };
     }
 
     function formatPeriodLabel(data) {
@@ -1452,43 +888,35 @@
       } else {
         label = `Du ${fmt(eff || data.period_start)} au ${fmt(data.period_end)}`;
       }
-
       if (data.history_days !== null && data.history_days < 90) {
-        const weeks = Math.round(data.history_days / 7);
-        label += ` — ⚠ ${weeks} sem. de données`;
+        label += ` — ${Math.round(data.history_days / 7)} sem. de données seulement`;
       }
       return label;
     }
 
     let currentTriPeriod = 'since_inception';
 
+    function montrerErreurTri(texte) {
+      document.getElementById('tri-error-texte').textContent = texte;
+      document.getElementById('tri-error').classList.remove('hidden');
+    }
+
     function loadTri(period) {
       currentTriPeriod = period;
 
-      // Style des boutons
       document.querySelectorAll('.tri-period-btn').forEach(btn => {
-        btn.classList.remove('bg-emerald-600','text-white','border-emerald-600');
-        btn.classList.add('bg-white','dark:bg-gray-800','text-gray-700','dark:text-gray-300','border-gray-300','dark:border-gray-600');
+        btn.setAttribute('aria-pressed', String(btn.id === 'tri-btn-' + period));
       });
-      const activeBtn = document.getElementById('tri-btn-' + period);
-      if (activeBtn) {
-        activeBtn.classList.remove('bg-white','dark:bg-gray-800','text-gray-700','dark:text-gray-300','border-gray-300','dark:border-gray-600');
-        activeBtn.classList.add('bg-emerald-600','text-white','border-emerald-600');
-      }
 
-      // Affichage dates custom
       const customDates = document.getElementById('tri-custom-dates');
       if (period === 'custom') {
         customDates.classList.remove('hidden');
-        // Ne pas charger tant que l'utilisateur n'a pas cliqué "Calculer"
-        const ds = document.getElementById('tri-date-start').value;
-        const de = document.getElementById('tri-date-end').value;
-        if (!ds) return;
+        // Ne pas charger tant que l'utilisateur n'a pas choisi de date de début
+        if (!document.getElementById('tri-date-start').value) return;
       } else {
         customDates.classList.add('hidden');
       }
 
-      // Loading state
       document.getElementById('tri-loading').classList.remove('hidden');
       document.getElementById('tri-data').classList.add('hidden');
       document.getElementById('tri-error').classList.add('hidden');
@@ -1507,60 +935,49 @@
           document.getElementById('tri-loading').classList.add('hidden');
 
           if (data.error) {
-            document.getElementById('tri-error').textContent = data.error;
-            document.getElementById('tri-error').classList.remove('hidden');
+            montrerErreurTri(data.error);
             return;
           }
 
-          // Global
           const globalPrimary = primaryRate(data.global, data.emphasize_annualized);
-          const globalDisplay = document.getElementById('tri-global-display');
-          globalDisplay.textContent = globalPrimary.display;
-          globalDisplay.className = 'text-2xl font-bold ' + triColor(globalPrimary.rate);
+          document.getElementById('tri-global-display').textContent = globalPrimary.display;
           document.getElementById('tri-global-label').textContent = globalPrimary.label;
           document.getElementById('tri-global-secondary').textContent = globalPrimary.secondary || '';
-
           document.getElementById('tri-period-label').textContent = formatPeriodLabel(data);
 
           // Par type
-          const byTypeEl = document.getElementById('tri-by-type');
-          byTypeEl.innerHTML = '';
           let hasNd = false;
-          Object.entries(data.by_type).forEach(([type, info]) => {
+          const parType = Object.entries(data.by_type).map(([type, info]) => {
             if (info.display === 'N/D') hasNd = true;
-            const color = TYPE_COLORS[type] || 'bg-gray-100 text-gray-800';
             const pr = primaryRate(info, data.emphasize_annualized);
-            byTypeEl.innerHTML += `
-              <div class="p-3 rounded-xl bg-gray-50 dark:bg-gray-700/50 border border-gray-100 dark:border-gray-700">
-                <div class="flex items-center justify-between mb-1">
-                  <span class="inline-flex px-2 py-0.5 rounded-full text-xs font-semibold ${color}">${type}</span>
-                </div>
-                <div class="text-lg font-bold ${triColor(pr.rate)}">${pr.display}</div>
-                <div class="text-xs text-gray-400">${pr.label}${pr.secondary ? ' · ' + pr.secondary : ''}</div>
-              </div>`;
+            const carte = el('div', 'rounded-card border border-line p-3');
+            carte.appendChild(el('span', 'etiquette', type));
+            carte.appendChild(el('p', 'num text-lg font-semibold text-ink mt-2', pr.display));
+            carte.appendChild(el('p', 'text-xs text-ink-3', pr.label + (pr.secondary ? ' · ' + pr.secondary : '')));
+            return carte;
           });
+          document.getElementById('tri-by-type').replaceChildren(...parType);
 
           // Par compte
           const byAccountEl = document.getElementById('tri-by-account');
           const byAccountContainer = document.getElementById('tri-by-account-container');
-          byAccountEl.innerHTML = '';
           const accounts = Object.values(data.by_account);
           if (accounts.length > 1) {
             byAccountContainer.classList.remove('hidden');
-            accounts.forEach(acc => {
+            byAccountEl.replaceChildren(...accounts.map(acc => {
               if (acc.display === 'N/D') hasNd = true;
               const pr = primaryRate(acc, data.emphasize_annualized);
-              byAccountEl.innerHTML += `
-                <div class="flex items-center justify-between px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-700/50">
-                  <span class="text-sm text-gray-700 dark:text-gray-300">${acc.name}</span>
-                  <div class="text-right">
-                    <span class="text-sm font-semibold ${triColor(pr.rate)}">${pr.display}</span>
-                    <span class="block text-[10px] text-gray-400">${pr.label}</span>
-                  </div>
-                </div>`;
-            });
+              const ligne = el('div', 'flex items-center justify-between gap-3 px-4 py-2');
+              ligne.appendChild(el('span', 'text-sm text-ink-2', acc.name));
+              const droite = el('div', 'text-right');
+              droite.appendChild(el('span', 'num text-sm font-semibold text-ink', pr.display));
+              droite.appendChild(el('span', 'block text-xs text-ink-3', pr.label));
+              ligne.appendChild(droite);
+              return ligne;
+            }));
           } else {
             byAccountContainer.classList.add('hidden');
+            byAccountEl.replaceChildren();
           }
 
           // Avertissement : historique court ou données manquantes
@@ -1569,13 +986,10 @@
           if (hasNd || data.global.display === 'N/D' || shortHistory) {
             let msg = '';
             if (shortHistory) {
-              const weeks = Math.round(data.history_days / 7);
-              msg += `Historique court (${weeks} semaines) : le TRI annualisé amplifie fortement les variations sur de courtes périodes — il sera plus représentatif après 6 mois de données. `;
+              msg += `Historique court (${Math.round(data.history_days / 7)} semaines) : le TRI annualisé amplifie fortement les variations sur de courtes périodes — il sera plus représentatif après 6 mois de données. `;
             }
-            if (hasNd || data.global.display === 'N/D') {
-              msg += 'Données insuffisantes pour certains segments.';
-            }
-            warn.textContent = msg.trim();
+            if (hasNd || data.global.display === 'N/D') msg += 'Données insuffisantes pour certains segments.';
+            document.getElementById('tri-warning-texte').textContent = msg.trim();
             warn.classList.remove('hidden');
           } else {
             warn.classList.add('hidden');
@@ -1583,93 +997,26 @@
 
           document.getElementById('tri-data').classList.remove('hidden');
         })
-        .catch(err => {
+        .catch(() => {
           document.getElementById('tri-loading').classList.add('hidden');
-          document.getElementById('tri-error').textContent = 'Erreur lors du calcul du TRI.';
-          document.getElementById('tri-error').classList.remove('hidden');
+          montrerErreurTri('Le calcul du TRI a échoué : le serveur n\'a pas répondu correctement. Réessayez dans un instant.');
         });
     }
 
-    // Initialiser le TRI au chargement
-    if (document.getElementById('tri-card')) {
-      loadTri('since_inception');
-    }
+    // ---------------------------------------------------------------
+    // Démarrage
+    // ---------------------------------------------------------------
+    document.addEventListener('DOMContentLoaded', function () {
+      dessinerGraphiques();
+      dessinerSankey();
+      if (document.getElementById('tri-card')) loadTri('since_inception');
+      const triDateEnd = document.getElementById('tri-date-end');
+      if (triDateEnd) triDateEnd.value = new Date().toISOString().split('T')[0];
+    });
 
-    // Initialiser la date de fin custom à aujourd'hui
-    const triDateEnd = document.getElementById('tri-date-end');
-    if (triDateEnd) {
-      triDateEnd.value = new Date().toISOString().split('T')[0];
-    }
+    window.addEventListener('themechange', () => {
+      dessinerGraphiques();
+      dessinerSankey();
+    });
   </script>
-
-  <!-- Modal de mise à jour de valorisation -->
-  <div id="valuationModal" class="hidden fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-    <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-md w-full">
-      <div class="sticky top-0 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between rounded-t-2xl">
-        <h2 class="text-xl font-bold text-gray-900 dark:text-white">Mettre à jour la valorisation</h2>
-        <button onclick="closeValuationModal()" class="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
-          <svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-          </svg>
-        </button>
-      </div>
-      
-      <form id="valuationForm" onsubmit="submitValuation(event)" class="p-6 space-y-4">
-        <!-- Messages -->
-        <div id="valuationError" class="hidden p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-300 text-sm"></div>
-        <div id="valuationSuccess" class="hidden p-3 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg text-green-700 dark:text-green-300 text-sm"></div>
-        
-        <!-- Compte -->
-        <div>
-          <label for="valuation_account" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Compte d'investissement
-          </label>
-          <select id="valuation_account" required
-                  class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-            <option value="">Sélectionnez un compte</option>
-            {% for account in investment_accounts %}
-            <option value="{{ account.id }}">{{ account.name }} ({{ account.provider }})</option>
-            {% endfor %}
-          </select>
-        </div>
-        
-        <!-- Montant -->
-        <div>
-          <label for="valuation_amount" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Valorisation actuelle (€)
-          </label>
-          <input type="number" id="valuation_amount" step="0.01" min="0" required placeholder="Ex: 5420.50"
-                 class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-        </div>
-        
-        <!-- Date -->
-        <div>
-          <label for="valuation_date" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Date de la valorisation
-          </label>
-          <input type="date" id="valuation_date" required
-                 class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-        </div>
-        
-        <!-- Note -->
-        <div class="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-          <p class="text-xs text-blue-700 dark:text-blue-300">
-            <strong>Note :</strong> Cette valorisation sera utilisée pour calculer votre plus-value et performance.
-          </p>
-        </div>
-        
-        <!-- Boutons -->
-        <div class="flex items-center gap-3 pt-2">
-          <button type="button" onclick="closeValuationModal()"
-                  class="flex-1 px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
-            Annuler
-          </button>
-          <button type="submit" id="submitValuationBtn"
-                  class="flex-1 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors">
-            Mettre à jour
-          </button>
-        </div>
-      </form>
-    </div>
-  </div>
 {% endblock %}

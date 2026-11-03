@@ -1,0 +1,13 @@
+{# Navigation latérale de l'outil finance (base.html et admin/base.html). Contexte : request, user, admin_actif (option). #}{% with n=request.resolver_match.url_name %}
+<a class="nav-lien" href="{% url 'dashboard' %}"{% if n == 'dashboard' %} aria-current="page"{% endif %}>{% include "graphite/icone.html" with nom="accueil" only %}Tableau de bord</a>
+<a class="nav-lien" href="{% url 'transactions' %}"{% if n == 'transactions' or n == 'transaction_create' %} aria-current="page"{% endif %}>{% include "graphite/icone.html" with nom="carte-bancaire" only %}Transactions</a>
+<a class="nav-lien" href="{% url 'accounts' %}"{% if n == 'accounts' or n == 'account_create' or n == 'account_update' or n == 'account_detail' %} aria-current="page"{% endif %}>{% include "graphite/icone.html" with nom="banque" only %}Comptes</a>
+<a class="nav-lien" href="{% url 'bank_connections_list' %}"{% if n == 'bank_connections_list' or n == 'bank_connection_create' or n == 'bank_connection_update' or n == 'bank_connection_delete' or n == 'bank_connection_2fa' or n == 'sync_logs_list' or n == 'sync_log_detail' or n == 'enablebanking_connect' or n == 'enablebanking_accounts' %} aria-current="page"{% endif %}>{% include "graphite/icone.html" with nom="chaine" only %}Connexions bancaires</a>
+<a class="nav-lien" href="{% url 'settings' %}"{% if n == 'settings' %} aria-current="page"{% endif %}>{% include "graphite/icone.html" with nom="reglages" only %}Paramètres</a>
+{% if user.is_superuser %}
+<p class="coquille-section">Administration</p>
+<a class="nav-lien" href="{% url 'user_list' %}"{% if n == 'user_list' %} aria-current="page"{% endif %}>{% include "graphite/icone.html" with nom="bouclier" only %}Utilisateurs</a>
+<a class="nav-lien" href="{% url 'invitation_list' %}"{% if n == 'invitation_list' or n == 'invitation_create' %} aria-current="page"{% endif %}>{% include "graphite/icone.html" with nom="plus" only %}Invitations</a>
+<a class="nav-lien" href="{% url 'admin:index' %}"{% if admin_actif %} aria-current="page"{% endif %}>{% include "graphite/icone.html" with nom="terminal" only %}Panneau admin Django</a>
+{% endif %}
+{% endwith %}

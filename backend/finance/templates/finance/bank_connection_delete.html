@@ -1,63 +1,45 @@
 {% extends 'base.html' %}
 {% block title %}Supprimer la connexion{% endblock %}
 {% block content %}
-  <div class="mb-8">
-    <div class="flex items-center gap-3 mb-2">
-      <a href="{% url 'bank_connections_list' %}" class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-        </svg>
-      </a>
-      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Supprimer la connexion</h1>
+  <div class="page-entete">
+    <div class="flex items-start gap-2 min-w-0">
+      <a href="{% url 'bank_connections_list' %}" class="btn btn-discret btn-icone -ml-2 shrink-0" aria-label="Retour aux connexions">{% include "graphite/icone.html" with nom="retour" only %}</a>
+      <div>
+        <h1 class="page-titre">Supprimer la connexion</h1>
+        <p class="page-sous-titre">Vérifiez ce qui va disparaître avant de confirmer.</p>
+      </div>
     </div>
   </div>
 
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-8 max-w-xl">
-    <div class="mb-6">
-      <div class="flex items-center gap-4 mb-4">
-        <div class="w-12 h-12 bg-red-100 dark:bg-red-900/40 rounded-full flex items-center justify-center">
-          <svg class="w-6 h-6 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-          </svg>
-        </div>
-        <div>
-          <h2 class="text-xl font-semibold text-gray-900 dark:text-white">Confirmer la suppression</h2>
-          <p class="text-sm text-gray-600 dark:text-gray-400">Cette action est irréversible</p>
-        </div>
-      </div>
-
-      <div class="bg-gray-50 dark:bg-gray-700/50 border border-gray-200 dark:border-gray-700 rounded-lg p-4 mb-6">
-        <p class="text-sm text-gray-700 dark:text-gray-300 mb-2">
-          <strong>Connexion :</strong> {{ connection.account_name }}
-        </p>
-        <p class="text-sm text-gray-700 dark:text-gray-300 mb-2">
-          <strong>Provider :</strong> {{ connection.get_provider_display }}
-        </p>
-        <p class="text-sm text-gray-700 dark:text-gray-300">
-          <strong>Statut :</strong> {{ connection.get_sync_status_display }}
-        </p>
-      </div>
-
-      <div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4 mb-6">
-        <p class="text-sm text-yellow-800 dark:text-yellow-300">
-          <strong>⚠️ Attention :</strong> La suppression de cette connexion entraînera :
-        </p>
-        <ul class="mt-2 ml-4 list-disc text-sm text-yellow-800 dark:text-yellow-300 space-y-1">
-          <li>La suppression de tous les logs de synchronisation associés</li>
-          <li>La déconnexion du compte associé (le compte ne sera pas supprimé)</li>
-          <li>L'arrêt de la synchronisation automatique pour ce compte</li>
-        </ul>
-      </div>
+  <section class="carte max-w-xl" aria-labelledby="t-confirmer">
+    <div class="carte-entete">
+      <h2 class="carte-titre" id="t-confirmer">Confirmer la suppression</h2>
+      <span class="etat etat-crit">Irréversible</span>
     </div>
+    <div class="carte-corps space-y-4">
+      <dl class="details">
+        <div><dt>Connexion</dt><dd>{{ connection.account_name }}</dd></div>
+        <div><dt>Provider</dt><dd>{{ connection.get_provider_display }}</dd></div>
+        <div><dt>Statut</dt><dd>{{ connection.get_sync_status_display }}</dd></div>
+      </dl>
 
-    <form method="post" class="flex gap-3">
-      {% csrf_token %}
-      <button type="submit" class="flex-1 px-6 py-3 bg-red-600 text-white rounded-lg font-medium hover:bg-red-700 transition-colors shadow-sm">
-        🗑 Supprimer définitivement
-      </button>
-      <a href="{% url 'bank_connections_list' %}" class="px-6 py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
-        Annuler
-      </a>
-    </form>
-  </div>
+      <div class="message message-crit">
+        {% include "graphite/icone.html" with nom="warn" only %}
+        <div class="flex-1">
+          <p><strong>Attention :</strong> la suppression de cette connexion entraînera :</p>
+          <ul class="mt-2 ml-4 list-disc space-y-1">
+            <li>La suppression de tous les logs de synchronisation associés</li>
+            <li>La déconnexion du compte associé (le compte ne sera pas supprimé)</li>
+            <li>L'arrêt de la synchronisation automatique pour ce compte</li>
+          </ul>
+        </div>
+      </div>
+
+      <form method="post" class="flex flex-wrap gap-2">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-danger">Supprimer définitivement</button>
+        <a href="{% url 'bank_connections_list' %}" class="btn btn-secondaire">Annuler</a>
+      </form>
+    </div>
+  </section>
 {% endblock %}

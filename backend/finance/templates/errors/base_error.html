@@ -1,52 +1,16 @@
-<!doctype html>
-<html lang="fr">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{% block title %}Erreur{% endblock %} — Finance</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    {% include "_theme_head.html" %}
-    <script>
-      tailwind.config = {
-        darkMode: 'class',
-        theme: { extend: { colors: { primary: '#6366f1', 'primary-dark': '#4f46e5', 'primary-light': '#818cf8' } } }
-      }
-    </script>
-  </head>
-  <body class="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center p-6">
-    <div class="max-w-lg w-full text-center">
-
-      <!-- Logo -->
-      <a href="/" class="inline-flex items-center justify-center w-14 h-14 bg-gradient-to-br from-primary to-primary-dark rounded-2xl shadow-lg mb-8">
-        <span class="text-white font-bold text-2xl">$</span>
-      </a>
-
-      <!-- Code d'erreur -->
-      <div class="text-8xl font-black text-gray-200 dark:text-gray-700 select-none leading-none mb-4">
-        {% block code %}???{% endblock %}
-      </div>
-
-      <!-- Message -->
-      <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-3">
-        {% block heading %}Une erreur s'est produite{% endblock %}
-      </h1>
-      <p class="text-gray-500 dark:text-gray-400 text-base mb-8">
-        {% block description %}{% endblock %}
-      </p>
-
-      <!-- Actions -->
-      <div class="flex flex-col sm:flex-row gap-3 justify-center">
-        {% block actions %}
-        <a href="/"
-           class="px-6 py-3 bg-gradient-to-r from-primary to-primary-dark text-white font-semibold rounded-xl shadow-md hover:shadow-lg transition-all text-sm">
-          Retour au dashboard
-        </a>
-        <button onclick="history.back()"
-                class="px-6 py-3 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-semibold rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-sm">
-          Page précédente
-        </button>
-        {% endblock %}
-      </div>
-    </div>
-  </body>
-</html>
+{% extends "_page_seule.html" %}
+{% block titre %}{% block title %}Erreur{% endblock %}{% endblock %}
+{% block largeur %}max-w-lg{% endblock %}
+{% block contenu %}
+<section class="carte carte-corps sm:p-8 text-center" aria-labelledby="t-erreur">
+  <p class="num text-5xl font-semibold text-ink-3 leading-none mb-4" aria-label="Code d'erreur">{% block code %}???{% endblock %}</p>
+  <h1 class="page-titre" id="t-erreur">{% block heading %}Une erreur s'est produite{% endblock %}</h1>
+  <p class="page-sous-titre mt-2 mb-6">{% block description %}{% endblock %}</p>
+  <div class="flex flex-col sm:flex-row gap-2 justify-center">
+    {% block actions %}
+    <a class="btn btn-principal" href="/">{% include "graphite/icone.html" with nom="accueil" only %}Retour au tableau de bord</a>
+    <button type="button" class="btn btn-secondaire" onclick="history.back()">{% include "graphite/icone.html" with nom="retour" only %}Page précédente</button>
+    {% endblock %}
+  </div>
+</section>
+{% endblock %}

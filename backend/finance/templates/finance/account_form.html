@@ -1,176 +1,92 @@
 {% extends 'base.html' %}
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
-  <div class="mb-8">
-    <div class="flex items-center gap-3 mb-2">
-      <a href="/accounts/" class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-        </svg>
-      </a>
-      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">{{ title }}</h1>
+  <div class="page-entete">
+    <div class="flex items-start gap-2 min-w-0">
+      <a href="/accounts/" class="btn btn-discret btn-icone -ml-2 shrink-0" aria-label="Retour aux comptes">{% include "graphite/icone.html" with nom="retour" only %}</a>
+      <div>
+        <h1 class="page-titre">{{ title }}</h1>
+        <p class="page-sous-titre">{% if account %}Nom, type et devise du compte ; sa synchronisation et son solde ne changent pas.{% else %}Créez un nouveau compte bancaire ou d'investissement.{% endif %}</p>
+      </div>
     </div>
-    <p class="text-gray-600 dark:text-gray-400 ml-9">{% if account %}Nom, type et devise du compte ; sa synchronisation et son solde ne changent pas.{% else %}Créez un nouveau compte bancaire ou d'investissement{% endif %}</p>
   </div>
 
-  <form method="post" class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-8 max-w-2xl">
+  <form method="post" class="carte carte-corps sm:p-6 max-w-2xl">
     {% csrf_token %}
-    
+
     {% if form.non_field_errors %}
-    <div class="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 text-sm text-red-800 dark:text-red-300">
-      {{ form.non_field_errors }}
+    <div class="message message-crit mb-5" role="alert">
+      {% include "graphite/icone.html" with nom="crit" only %}
+      <div class="flex-1">{{ form.non_field_errors }}</div>
     </div>
     {% endif %}
-    
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <!-- Nom du compte -->
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
       <div class="md:col-span-2">
-        <label for="{{ form.name.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          {{ form.name.label }} <span class="text-red-500">*</span>
-        </label>
-        <input type="text" 
-               name="{{ form.name.name }}" 
-               id="{{ form.name.id_for_label }}"
-               value="{{ form.name.value|default:'' }}"
-               required
-               class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
-               placeholder="Ex: Compte courant BoursoBank">
-        {% if form.name.errors %}
-        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.name.errors|striptags }}</div>
-        {% endif %}
+        <label for="{{ form.name.id_for_label }}" class="champ-libelle">{{ form.name.label }} <span class="text-ink-3">(obligatoire)</span></label>
+        <input type="text" name="{{ form.name.name }}" id="{{ form.name.id_for_label }}" value="{{ form.name.value|default:'' }}" required
+               class="champ" placeholder="Ex : Compte courant BoursoBank"{% if form.name.errors %} aria-invalid="true"{% endif %}>
+        {% if form.name.errors %}<p class="champ-erreur">{{ form.name.errors|striptags }}</p>{% endif %}
       </div>
 
-      <!-- Type de compte -->
       <div>
-        <label for="{{ form.type.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          {{ form.type.label }} <span class="text-red-500">*</span>
-        </label>
-        <select name="{{ form.type.name }}" 
-                id="{{ form.type.id_for_label }}"
-                required
-                onchange="togglePortfolioType()"
-                class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent">
+        <label for="{{ form.type.id_for_label }}" class="champ-libelle">{{ form.type.label }} <span class="text-ink-3">(obligatoire)</span></label>
+        <select name="{{ form.type.name }}" id="{{ form.type.id_for_label }}" required onchange="togglePortfolioType()" class="champ"{% if form.type.errors %} aria-invalid="true"{% endif %}>
           <option value="">Sélectionnez un type</option>
           {% for value, label in form.type.field.choices %}
             <option value="{{ value }}" {% if form.type.value == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
-        {% if form.type.errors %}
-        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.type.errors|striptags }}</div>
-        {% endif %}
+        {% if form.type.errors %}<p class="champ-erreur">{{ form.type.errors|striptags }}</p>{% endif %}
       </div>
 
       <!-- Type de portefeuille (uniquement pour broker) -->
-               <div id="portfolio-type-container" style="display: none;">
-                 <label for="{{ form.portfolio_type.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                   {{ form.portfolio_type.label }}
-                   <span class="text-xs text-gray-500 dark:text-gray-400">(Optionnel)</span>
-                 </label>
-                 <select name="{{ form.portfolio_type.name }}"
-                         id="{{ form.portfolio_type.id_for_label }}"
-                         class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent">
-                   <option value="">Non spécifié</option>
-                   {% for value, label in form.portfolio_type.field.choices %}
-                     <option value="{{ value }}" {% if form.portfolio_type.value == value %}selected{% endif %}>{{ label }}</option>
-                   {% endfor %}
-                 </select>
-                 {% if form.portfolio_type.errors %}
-                 <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.portfolio_type.errors|striptags }}</div>
-                 {% endif %}
-                 <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                   💡 Utile pour distinguer CTO, PEA, Crypto, etc.
-                 </div>
-               </div>
-
-      <!-- Devise -->
-      <div>
-        <label for="{{ form.currency.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          {{ form.currency.label }}
-        </label>
-        <input type="text" 
-               name="{{ form.currency.name }}" 
-               id="{{ form.currency.id_for_label }}"
-               value="{{ form.currency.value|default:'EUR' }}"
-               class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
-               placeholder="EUR">
-        {% if form.currency.errors %}
-        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.currency.errors|striptags }}</div>
-        {% endif %}
-      </div>
-
-      <!-- Fournisseur -->
-      <div>
-        <label for="{{ form.provider.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          {{ form.provider.label }}
-          <span class="text-xs text-gray-500 dark:text-gray-400">(Optionnel)</span>
-        </label>
-        <select name="{{ form.provider.name }}"
-                id="{{ form.provider.id_for_label }}"
-                class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent">
+      <div id="portfolio-type-container" style="display: none;">
+        <label for="{{ form.portfolio_type.id_for_label }}" class="champ-libelle">{{ form.portfolio_type.label }} <span class="text-ink-3">(optionnel)</span></label>
+        <select name="{{ form.portfolio_type.name }}" id="{{ form.portfolio_type.id_for_label }}" class="champ" aria-describedby="portfolio-aide">
           <option value="">Non spécifié</option>
-          {% for value, label in form.provider.field.choices %}
-            {% if value %}
-            <option value="{{ value }}" {% if form.provider.value == value %}selected{% endif %}>{{ label }}</option>
-            {% endif %}
+          {% for value, label in form.portfolio_type.field.choices %}
+            <option value="{{ value }}" {% if form.portfolio_type.value == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
-        {% if form.provider.errors %}
-        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.provider.errors|striptags }}</div>
-        {% endif %}
+        {% if form.portfolio_type.errors %}<p class="champ-erreur">{{ form.portfolio_type.errors|striptags }}</p>{% endif %}
+        <p class="champ-aide" id="portfolio-aide">Utile pour distinguer CTO, PEA, Crypto, etc.</p>
       </div>
 
-      <!-- IBAN -->
-      <div class="md:col-span-2">
-        <label for="{{ form.iban.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          {{ form.iban.label }}
-          <span class="text-xs text-gray-500 dark:text-gray-400">(Optionnel)</span>
-        </label>
-        <input type="text" 
-               name="{{ form.iban.name }}" 
-               id="{{ form.iban.id_for_label }}"
-               value="{{ form.iban.value|default:'' }}"
-               class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent font-mono text-sm"
-               placeholder="FR76 XXXX XXXX XXXX XXXX XXXX XXX">
-        {% if form.iban.errors %}
-        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.iban.errors|striptags }}</div>
-        {% endif %}
+      <div>
+        <label for="{{ form.currency.id_for_label }}" class="champ-libelle">{{ form.currency.label }}</label>
+        <input type="text" name="{{ form.currency.name }}" id="{{ form.currency.id_for_label }}" value="{{ form.currency.value|default:'EUR' }}" class="champ font-mono" placeholder="EUR"{% if form.currency.errors %} aria-invalid="true"{% endif %}>
+        {% if form.currency.errors %}<p class="champ-erreur">{{ form.currency.errors|striptags }}</p>{% endif %}
       </div>
 
-      <!-- Taux d'intérêt -->
+      <div>
+        <label for="{{ form.provider.id_for_label }}" class="champ-libelle">{{ form.provider.label }} <span class="text-ink-3">(optionnel)</span></label>
+        <select name="{{ form.provider.name }}" id="{{ form.provider.id_for_label }}" class="champ">
+          <option value="">Non spécifié</option>
+          {% for value, label in form.provider.field.choices %}
+            {% if value %}<option value="{{ value }}" {% if form.provider.value == value %}selected{% endif %}>{{ label }}</option>{% endif %}
+          {% endfor %}
+        </select>
+        {% if form.provider.errors %}<p class="champ-erreur">{{ form.provider.errors|striptags }}</p>{% endif %}
+      </div>
+
       <div class="md:col-span-2">
-        <label for="{{ form.interest_rate_apy.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          {{ form.interest_rate_apy.label }}
-          <span class="text-xs text-gray-500 dark:text-gray-400">(Optionnel, pour les livrets)</span>
-        </label>
-        <div class="relative">
-          <input type="number" 
-                 step="0.0001"
-                 name="{{ form.interest_rate_apy.name }}" 
-                 id="{{ form.interest_rate_apy.id_for_label }}"
-                 value="{{ form.interest_rate_apy.value|default:'' }}"
-                 class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
-                 placeholder="0.0300">
-          <div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-            <span class="text-gray-500 dark:text-gray-400 text-sm">% APY</span>
-          </div>
-        </div>
-        {% if form.interest_rate_apy.errors %}
-        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.interest_rate_apy.errors|striptags }}</div>
-        {% endif %}
-        <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          💡 Exemple : Pour 3%, entrez 0.0300
-        </div>
+        <label for="{{ form.iban.id_for_label }}" class="champ-libelle">{{ form.iban.label }} <span class="text-ink-3">(optionnel)</span></label>
+        <input type="text" name="{{ form.iban.name }}" id="{{ form.iban.id_for_label }}" value="{{ form.iban.value|default:'' }}" class="champ font-mono" placeholder="FR76 XXXX XXXX XXXX XXXX XXXX XXX"{% if form.iban.errors %} aria-invalid="true"{% endif %}>
+        {% if form.iban.errors %}<p class="champ-erreur">{{ form.iban.errors|striptags }}</p>{% endif %}
+      </div>
+
+      <div class="md:col-span-2">
+        <label for="{{ form.interest_rate_apy.id_for_label }}" class="champ-libelle">{{ form.interest_rate_apy.label }} <span class="text-ink-3">(optionnel, pour les livrets, en APY)</span></label>
+        <input type="number" step="0.0001" name="{{ form.interest_rate_apy.name }}" id="{{ form.interest_rate_apy.id_for_label }}" value="{{ form.interest_rate_apy.value|default:'' }}" class="champ num sm:w-56" placeholder="0.0300" aria-describedby="taux-aide"{% if form.interest_rate_apy.errors %} aria-invalid="true"{% endif %}>
+        {% if form.interest_rate_apy.errors %}<p class="champ-erreur">{{ form.interest_rate_apy.errors|striptags }}</p>{% endif %}
+        <p class="champ-aide" id="taux-aide">Exemple : pour 3 %, entrez 0.0300.</p>
       </div>
     </div>
 
-    <!-- Boutons -->
-    <div class="mt-8 flex gap-3">
-      <button type="submit" class="px-6 py-3 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark transition-colors shadow-sm">
-        ✓ Enregistrer le compte
-      </button>
-      <a href="/accounts/" class="px-6 py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
-        Annuler
-      </a>
+    <div class="mt-6 flex flex-wrap gap-2">
+      <button type="submit" class="btn btn-principal">Enregistrer le compte</button>
+      <a href="/accounts/" class="btn btn-secondaire">Annuler</a>
     </div>
   </form>
 
@@ -179,17 +95,8 @@
     function togglePortfolioType() {
       const typeSelect = document.getElementById('{{ form.type.id_for_label }}');
       const portfolioContainer = document.getElementById('portfolio-type-container');
-      
-      if (typeSelect.value === 'broker') {
-        portfolioContainer.style.display = 'block';
-      } else {
-        portfolioContainer.style.display = 'none';
-      }
+      portfolioContainer.style.display = typeSelect.value === 'broker' ? 'block' : 'none';
     }
-    
-    // Vérifier au chargement de la page
-    document.addEventListener('DOMContentLoaded', function() {
-      togglePortfolioType();
-    });
+    document.addEventListener('DOMContentLoaded', togglePortfolioType);
   </script>
 {% endblock %}

@@ -1,0 +1,121 @@
+/* =====================================================================
+   Base commune des applications personnelles — charte « Graphite »
+   ---------------------------------------------------------------------
+   Seul endroit où vivent les couleurs, angles, ombres et polices.
+   Tailwind les lit via base/base.js : une page écrit `bg-surface
+   text-ink border-line` et le mode sombre se règle ICI, une fois.
+   Ne jamais écrire de couleur en dur (#hex, gray-500, indigo…) ni de
+   variante `dark:` dans une page : ajouter un jeton ici si besoin.
+
+   Les couleurs sont des triplets RGB pour garder l'opacité Tailwind
+   (`bg-accent/10`). Doc : docs/charte-interfaces.md.
+   ===================================================================== */
+
+/* ---------- Polices hébergées localement ---------------------------- */
+@font-face { font-family: "Inter"; font-weight: 400; font-display: swap; src: url("vendor/fonts/inter-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-weight: 500; font-display: swap; src: url("vendor/fonts/inter-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-weight: 600; font-display: swap; src: url("vendor/fonts/inter-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-weight: 700; font-display: swap; src: url("vendor/fonts/inter-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-display: swap; src: url("vendor/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 500; font-display: swap; src: url("vendor/fonts/jetbrains-mono-latin-500-normal.woff2") format("woff2"); }
+
+/* ---------- Jetons — clair ------------------------------------------ */
+:root {
+  --f-sans: "Inter", ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --f-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+
+  /* Fonds et filets : neutres zinc */
+  --bg: 244 244 245;          /* fond de page */
+  --surface: 255 255 255;     /* cartes, tableaux, champs */
+  --sunken: 250 250 250;      /* en-têtes de tableau, creux, survol */
+  --line: 228 228 231;        /* filets */
+  --line-strong: 212 212 216; /* filets appuyés, bord de champ */
+
+  /* Texte */
+  --ink: 24 24 27;            /* principal */
+  --ink-2: 63 63 70;          /* courant */
+  --ink-3: 113 113 122;       /* discret — 4,8:1 sur blanc, minimum AA */
+
+  /* Accent unique : sarcelle (teal-700), AA sur blanc */
+  --accent: 15 118 110;
+  --accent-hover: 17 94 89;
+  --accent-soft: 236 253 250;
+  --on-accent: 255 255 255;
+  --accent-text: 15 118 110;  /* liens, valeur active */
+
+  /* Barre latérale : sombre en permanence, même en thème clair */
+  --side: 24 24 27;
+  --side-line: 39 39 42;
+  --side-ink: 212 212 216;
+  --side-ink-3: 161 161 170;
+  --side-active: 63 63 70;
+  --side-active-ink: 255 255 255;
+  --side-hover: 39 39 42;
+
+  /* États standard (couleur de la puce uniquement) */
+  --st-crit: 185 28 28;     --st-crit-soft: 254 226 226;
+  --st-warn: 180 83 9;      --st-warn-soft: 254 243 199;
+  --st-info: 29 78 216;     --st-info-soft: 219 234 254;
+  --st-ok: 21 128 61;       --st-ok-soft: 220 252 231;
+  --st-unknown: 82 82 91;   --st-unknown-soft: 228 228 231;
+  --st-off: 113 113 122;    --st-off-soft: 244 244 245;
+
+  /* Forme */
+  --r-card: 8px;
+  --r-ctl: 6px;
+  --r-badge: 6px;
+  --sh-card: none;                                    /* filets, pas d'ombres */
+  --sh-pop: 0 12px 32px -12px rgb(0 0 0 / .35);       /* menus, tiroir */
+  --row: 6px;                                         /* densité des lignes */
+}
+
+/* ---------- Jetons — sombre (classe `dark` sur <html>) -------------- */
+.dark {
+  --bg: 9 9 11;
+  --surface: 24 24 27;
+  --sunken: 18 18 21;
+  --line: 45 45 50;
+  --line-strong: 63 63 70;
+
+  --ink: 244 244 245;
+  --ink-2: 212 212 216;
+  --ink-3: 161 161 170;
+
+  --accent: 45 212 191;
+  --accent-hover: 94 234 212;
+  --accent-soft: 17 46 44;
+  --on-accent: 4 47 46;
+  --accent-text: 94 234 212;
+
+  --side: 9 9 11;
+  --side-line: 39 39 42;
+  --side-active: 39 39 42;
+  --side-hover: 24 24 27;
+
+  --st-crit: 248 113 113;   --st-crit-soft: 69 26 26;
+  --st-warn: 251 191 36;    --st-warn-soft: 66 42 10;
+  --st-info: 96 165 250;    --st-info-soft: 23 37 84;
+  --st-ok: 74 222 128;      --st-ok-soft: 20 54 34;
+  --st-unknown: 161 161 170; --st-unknown-soft: 39 39 42;
+  --st-off: 113 113 122;    --st-off-soft: 24 24 27;
+
+  --sh-pop: 0 12px 32px -12px rgb(0 0 0 / .7);
+}
+
+/* ---------- Socle ----------------------------------------------------- */
+html { font-family: var(--f-sans); -webkit-font-smoothing: antialiased; color-scheme: light; }
+html.dark { color-scheme: dark; }
+body { background: rgb(var(--bg)); color: rgb(var(--ink)); }
+
+/* Chiffres : mono tabulaire, zéro barré */
+.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; font-feature-settings: "zero" 1; }
+
+/* Libellé de section en petites capitales */
+.libelle { font-size: .75rem; font-weight: 600; color: rgb(var(--ink-3)); text-transform: uppercase; letter-spacing: .04em; }
+
+:focus-visible { outline: 2px solid rgb(var(--accent)); outline-offset: 2px; }
+input[type="range"], input[type="checkbox"], input[type="radio"] { accent-color: rgb(var(--accent)); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}

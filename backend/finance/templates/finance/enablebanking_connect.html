@@ -1,64 +1,53 @@
 {% extends 'base.html' %}
 {% block title %}Connecter une banque{% endblock %}
 {% block content %}
-  <div class="mb-8">
-    <div class="flex items-center gap-3 mb-2">
-      <a href="{% url 'bank_connections_list' %}" class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" aria-label="Retour">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-        </svg>
-      </a>
-      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Connecter une banque</h1>
+  <div class="page-entete">
+    <div class="flex items-start gap-2 min-w-0">
+      <a href="{% url 'bank_connections_list' %}" class="btn btn-discret btn-icone -ml-2 shrink-0" aria-label="Retour">{% include "graphite/icone.html" with nom="retour" only %}</a>
+      <div>
+        <h1 class="page-titre">Connecter une banque</h1>
+        <p class="page-sous-titre">Accès officiel en lecture seule (DSP2) : vous validez dans l'application de votre banque, aucun mot de passe n'est enregistré ici.</p>
+      </div>
     </div>
-    <p class="text-gray-600 dark:text-gray-400 ml-9">Accès officiel en lecture seule (DSP2) : vous validez dans l'application de votre banque, aucun mot de passe n'est enregistré ici.</p>
   </div>
 
-  {% if messages %}
-    <div class="mb-6">
-      {% for message in messages %}
-        <div class="mb-3 p-4 rounded-lg {% if message.tags == 'error' %}bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300{% else %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300{% endif %}">{{ message }}</div>
-      {% endfor %}
-    </div>
-  {% endif %}
-
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 max-w-xl">
-    <form method="get" class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-      <label class="block text-sm">
-        <span class="text-gray-700 dark:text-gray-300 font-medium">Pays de la banque</span>
-        <select name="country" onchange="this.form.submit()" class="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
+  <section class="carte carte-corps sm:p-6 max-w-xl" aria-label="Choix de la banque">
+    <form method="get" class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+      <div>
+        <label class="champ-libelle" for="country">Pays de la banque</label>
+        <select class="champ" id="country" name="country" onchange="this.form.submit()">
           {% for code, label in countries %}<option value="{{ code }}" {% if code == country %}selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
-      </label>
-      <label class="block text-sm">
-        <span class="text-gray-700 dark:text-gray-300 font-medium">Type de compte</span>
-        <select name="psu_type" onchange="this.form.submit()" class="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
+      </div>
+      <div>
+        <label class="champ-libelle" for="psu_type">Type de compte</label>
+        <select class="champ" id="psu_type" name="psu_type" onchange="this.form.submit()">
           {% for code, label in psu_types %}<option value="{{ code }}" {% if code == psu_type %}selected{% endif %}>{{ label }}</option>{% endfor %}
         </select>
-      </label>
-      <noscript><button type="submit" class="text-sm text-primary dark:text-primary-light">Actualiser la liste</button></noscript>
+      </div>
+      <noscript><button type="submit" class="btn btn-secondaire">Actualiser la liste</button></noscript>
     </form>
 
     {% if error %}
-      <div class="p-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300 text-sm">Liste des banques indisponible : {{ error }}</div>
+      <div class="message message-crit" role="alert">
+        {% include "graphite/icone.html" with nom="crit" only %}
+        <p class="flex-1">Liste des banques indisponible : {{ error }}</p>
+      </div>
     {% else %}
       <form method="post">
         {% csrf_token %}
         <input type="hidden" name="country" value="{{ country }}">
         <input type="hidden" name="psu_type" value="{{ psu_type }}">
-        <label class="block text-sm mb-4">
-          <span class="text-gray-700 dark:text-gray-300 font-medium">Banque</span>
-          <select name="aspsp" required class="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-            <option value="">— Choisir ({{ aspsps|length }} disponibles) —</option>
-            {% for a in aspsps %}
-              <option value="{{ a.name }}">{{ a.name }}{% if a.beta %} (bêta){% endif %}{% if a.maximum_consent_validity %} · accès {% widthratio a.maximum_consent_validity 86400 1 %} j{% endif %}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <button type="submit" class="w-full px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-semibold hover:bg-primary-dark transition-colors shadow-sm">
-          Continuer vers la banque →
-        </button>
-        <p class="mt-3 text-xs text-gray-500 dark:text-gray-400">Vous serez redirigé vers votre banque, puis ramené ici pour choisir les comptes à synchroniser.</p>
+        <label class="champ-libelle" for="aspsp">Banque</label>
+        <select class="champ mb-4" id="aspsp" name="aspsp" required>
+          <option value="">— Choisir ({{ aspsps|length }} disponibles) —</option>
+          {% for a in aspsps %}
+            <option value="{{ a.name }}">{{ a.name }}{% if a.beta %} (bêta){% endif %}{% if a.maximum_consent_validity %} · accès {% widthratio a.maximum_consent_validity 86400 1 %} j{% endif %}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-principal w-full">Continuer vers la banque{% include "graphite/icone.html" with nom="fleche-droite" only %}</button>
+        <p class="champ-aide mt-3">Vous serez redirigé vers votre banque, puis ramené ici pour choisir les comptes à synchroniser.</p>
       </form>
     {% endif %}
-  </div>
+  </section>
 {% endblock %}

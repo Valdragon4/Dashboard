@@ -1,252 +1,125 @@
 {% extends 'base.html' %}
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
-  <div class="mb-8">
-    <div class="flex items-center gap-3 mb-2">
-      <a href="{% url 'bank_connections_list' %}" class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-        </svg>
-      </a>
-      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">{{ title }}</h1>
+  <div class="page-entete">
+    <div class="flex items-start gap-2 min-w-0">
+      <a href="{% url 'bank_connections_list' %}" class="btn btn-discret btn-icone -ml-2 shrink-0" aria-label="Retour aux connexions">{% include "graphite/icone.html" with nom="retour" only %}</a>
+      <div>
+        <h1 class="page-titre">{{ title }}</h1>
+        <p class="page-sous-titre">Configurez votre connexion bancaire pour la synchronisation automatique.</p>
+      </div>
     </div>
-    <p class="text-gray-600 dark:text-gray-400 ml-9">Configurez votre connexion bancaire pour la synchronisation automatique</p>
   </div>
 
-  <form method="post" class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-8 max-w-2xl">
+  <form method="post" class="carte carte-corps sm:p-6 max-w-2xl">
     {% csrf_token %}
-    
+
     {% if form.non_field_errors %}
-    <div class="mb-6 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 text-sm text-red-800 dark:text-red-300">
-      {{ form.non_field_errors }}
+    <div class="message message-crit mb-5" role="alert">
+      {% include "graphite/icone.html" with nom="crit" only %}
+      <div class="flex-1">{{ form.non_field_errors }}</div>
     </div>
     {% endif %}
-    
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-      <!-- Provider -->
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
       <div class="md:col-span-2">
-        <label for="{{ form.provider.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          {{ form.provider.label }} <span class="text-red-500">*</span>
-        </label>
-        <select name="{{ form.provider.name }}" 
-                id="{{ form.provider.id_for_label }}"
-                required
-                onchange="toggleProviderFields()"
-                class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent">
+        <label for="{{ form.provider.id_for_label }}" class="champ-libelle">{{ form.provider.label }} <span class="text-ink-3">(obligatoire)</span></label>
+        <select name="{{ form.provider.name }}" id="{{ form.provider.id_for_label }}" required onchange="toggleProviderFields()" class="champ"{% if form.provider.errors %} aria-invalid="true"{% endif %}>
           <option value="">Sélectionnez un provider</option>
           {% for value, label in form.provider.field.choices %}
             <option value="{{ value }}" {% if form.provider.value == value %}selected{% endif %}>{{ label }}</option>
           {% endfor %}
         </select>
-        {% if form.provider.errors %}
-        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.provider.errors|striptags }}</div>
-        {% endif %}
+        {% if form.provider.errors %}<p class="champ-erreur">{{ form.provider.errors|striptags }}</p>{% endif %}
       </div>
 
-      <!-- Comptes associés (sélection multiple) -->
-      <div class="md:col-span-2">
-        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          {{ form.accounts.label }} <span class="text-red-500">*</span>
-        </label>
-        <div class="border border-gray-300 dark:border-gray-600 rounded-lg p-3 space-y-2 max-h-48 overflow-y-auto bg-white dark:bg-gray-800">
+      <fieldset class="md:col-span-2">
+        <legend class="champ-libelle">{{ form.accounts.label }} <span class="text-ink-3">(obligatoire)</span></legend>
+        <div class="tableau-cadre max-h-48 overflow-y-auto divide-y divide-line">
           {% for account in form.accounts.field.queryset %}
-          <label class="flex items-center gap-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 px-2 py-1 rounded-lg">
-            <input type="checkbox"
-                   name="{{ form.accounts.html_name }}"
-                   value="{{ account.id }}"
-                   {% if account in form.accounts.initial or account.id|stringformat:"s" in form.accounts.value %}checked{% endif %}
-                   class="w-4 h-4 text-primary dark:text-primary-light border-gray-300 dark:border-gray-600 rounded focus:ring-primary">
-            <span class="text-sm text-gray-800 dark:text-gray-100">
-              <strong>{{ account.name }}</strong>
-              <span class="text-gray-500 dark:text-gray-400 text-xs ml-1">({{ account.get_type_display }})</span>
-            </span>
+          <label class="flex items-center gap-3 cursor-pointer px-3 py-2 hover:bg-sunken">
+            <input type="checkbox" name="{{ form.accounts.html_name }}" value="{{ account.id }}" class="w-4 h-4"
+                   {% if account in form.accounts.initial or account.id|stringformat:"s" in form.accounts.value %}checked{% endif %}>
+            <span class="text-sm text-ink"><span class="font-medium">{{ account.name }}</span> <span class="text-ink-3 text-xs">({{ account.get_type_display }})</span></span>
           </label>
           {% empty %}
-          <p class="text-sm text-gray-500 dark:text-gray-400 py-2 px-2">
-            Aucun compte disponible.
-            <a href="{% url 'account_create' %}" class="text-primary dark:text-primary-light hover:underline">Créer un compte →</a>
-          </p>
+          <p class="text-sm text-ink-3 px-3 py-2">Aucun compte disponible. <a href="{% url 'account_create' %}" class="lien">Créer un compte</a></p>
           {% endfor %}
         </div>
-        {% if form.accounts.errors %}
-        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.accounts.errors|striptags }}</div>
-        {% endif %}
-        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Sélectionnez un ou plusieurs comptes à synchroniser avec cette connexion.</p>
-      </div>
+        {% if form.accounts.errors %}<p class="champ-erreur">{{ form.accounts.errors|striptags }}</p>{% endif %}
+        <p class="champ-aide">Sélectionnez un ou plusieurs comptes à synchroniser avec cette connexion.</p>
+      </fieldset>
 
-      <!-- Nom de la connexion -->
       <div class="md:col-span-2">
-        <label for="{{ form.account_name.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          {{ form.account_name.label }}
-          <span class="text-xs text-gray-500 dark:text-gray-400">(Optionnel, défaut: nom du compte sélectionné)</span>
-        </label>
-        <input type="text" 
-               name="{{ form.account_name.name }}" 
-               id="{{ form.account_name.id_for_label }}"
-               value="{{ form.account_name.value|default:'' }}"
-               class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
-               placeholder="Ex: Mon compte Trade Republic">
-        {% if form.account_name.errors %}
-        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.account_name.errors|striptags }}</div>
-        {% endif %}
+        <label for="{{ form.account_name.id_for_label }}" class="champ-libelle">{{ form.account_name.label }} <span class="text-ink-3">(optionnel, défaut : nom du compte sélectionné)</span></label>
+        <input type="text" name="{{ form.account_name.name }}" id="{{ form.account_name.id_for_label }}" value="{{ form.account_name.value|default:'' }}" class="champ" placeholder="Ex : Mon compte Trade Republic"{% if form.account_name.errors %} aria-invalid="true"{% endif %}>
+        {% if form.account_name.errors %}<p class="champ-erreur">{{ form.account_name.errors|striptags }}</p>{% endif %}
       </div>
 
       <!-- Champs Trade Republic -->
-      <div id="trade-republic-fields" class="md:col-span-2" style="display: none;">
-        <div class="bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-4 mb-4">
-          <h3 class="text-sm font-semibold text-purple-900 dark:text-purple-300 mb-3">Credentials Trade Republic</h3>
-          
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label for="{{ form.phone_number.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                {{ form.phone_number.label }} <span class="text-red-500">*</span>
-              </label>
-              <input type="tel" 
-                     name="{{ form.phone_number.name }}" 
-                     id="{{ form.phone_number.id_for_label }}"
-                     value="{{ form.phone_number.value|default:'' }}"
-                     class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
-                     placeholder="+33123456789">
-              {% if form.phone_number.errors %}
-              <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.phone_number.errors|striptags }}</div>
-              {% endif %}
-            </div>
-
-            <div>
-              <label for="{{ form.pin.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                {{ form.pin.label }} <span class="text-red-500">*</span>
-              </label>
-              <input type="password" 
-                     name="{{ form.pin.name }}" 
-                     id="{{ form.pin.id_for_label }}"
-                     value="{{ form.pin.value|default:'' }}"
-                     autocomplete="off"
-                     class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
-                     placeholder="Code PIN">
-              {% if form.pin.errors %}
-              <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.pin.errors|striptags }}</div>
-              {% endif %}
-            </div>
+      <fieldset id="trade-republic-fields" class="md:col-span-2 rounded-card border border-line bg-sunken p-4" style="display: none;">
+        <legend class="px-1 text-sm font-semibold text-ink">Identifiants Trade Republic</legend>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label for="{{ form.phone_number.id_for_label }}" class="champ-libelle">{{ form.phone_number.label }} <span class="text-ink-3">(obligatoire)</span></label>
+            <input type="tel" name="{{ form.phone_number.name }}" id="{{ form.phone_number.id_for_label }}" value="{{ form.phone_number.value|default:'' }}" class="champ num" placeholder="+33123456789"{% if form.phone_number.errors %} aria-invalid="true"{% endif %}>
+            {% if form.phone_number.errors %}<p class="champ-erreur">{{ form.phone_number.errors|striptags }}</p>{% endif %}
+          </div>
+          <div>
+            <label for="{{ form.pin.id_for_label }}" class="champ-libelle">{{ form.pin.label }} <span class="text-ink-3">(obligatoire)</span></label>
+            <input type="password" name="{{ form.pin.name }}" id="{{ form.pin.id_for_label }}" value="{{ form.pin.value|default:'' }}" autocomplete="off" class="champ" placeholder="Code PIN"{% if form.pin.errors %} aria-invalid="true"{% endif %}>
+            {% if form.pin.errors %}<p class="champ-erreur">{{ form.pin.errors|striptags }}</p>{% endif %}
           </div>
         </div>
-      </div>
+      </fieldset>
 
-      <!-- Champs BoursoBank/Hello Bank -->
-      <div id="bank-fields" class="md:col-span-2" style="display: none;">
-        <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-4">
-          <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-300 mb-3">Credentials bancaires</h3>
-          
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label for="{{ form.username.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                {{ form.username.label }} <span class="text-red-500">*</span>
-              </label>
-              <input type="text" 
-                     name="{{ form.username.name }}" 
-                     id="{{ form.username.id_for_label }}"
-                     value="{{ form.username.value|default:'' }}"
-                     class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
-                     placeholder="Nom d'utilisateur">
-              {% if form.username.errors %}
-              <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.username.errors|striptags }}</div>
-              {% endif %}
-            </div>
-
-            <div>
-              <label for="{{ form.password.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                {{ form.password.label }} <span class="text-red-500">*</span>
-              </label>
-              <input type="password" 
-                     name="{{ form.password.name }}" 
-                     id="{{ form.password.id_for_label }}"
-                     value="{{ form.password.value|default:'' }}"
-                     autocomplete="off"
-                     class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
-                     placeholder="Mot de passe">
-              {% if form.password.errors %}
-              <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.password.errors|striptags }}</div>
-              {% endif %}
-            </div>
+      <!-- Champs BoursoBank / Hello Bank -->
+      <fieldset id="bank-fields" class="md:col-span-2 rounded-card border border-line bg-sunken p-4" style="display: none;">
+        <legend class="px-1 text-sm font-semibold text-ink">Identifiants bancaires</legend>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label for="{{ form.username.id_for_label }}" class="champ-libelle">{{ form.username.label }} <span class="text-ink-3">(obligatoire)</span></label>
+            <input type="text" name="{{ form.username.name }}" id="{{ form.username.id_for_label }}" value="{{ form.username.value|default:'' }}" class="champ" placeholder="Nom d'utilisateur"{% if form.username.errors %} aria-invalid="true"{% endif %}>
+            {% if form.username.errors %}<p class="champ-erreur">{{ form.username.errors|striptags }}</p>{% endif %}
+          </div>
+          <div>
+            <label for="{{ form.password.id_for_label }}" class="champ-libelle">{{ form.password.label }} <span class="text-ink-3">(obligatoire)</span></label>
+            <input type="password" name="{{ form.password.name }}" id="{{ form.password.id_for_label }}" value="{{ form.password.value|default:'' }}" autocomplete="off" class="champ" placeholder="Mot de passe"{% if form.password.errors %} aria-invalid="true"{% endif %}>
+            {% if form.password.errors %}<p class="champ-erreur">{{ form.password.errors|striptags }}</p>{% endif %}
           </div>
         </div>
-      </div>
+      </fieldset>
 
-      <!-- Code 2FA (optionnel pour tous) -->
       <div class="md:col-span-2">
-        <label for="{{ form.two_fa_code.id_for_label }}" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          {{ form.two_fa_code.label }}
-          <span class="text-xs text-gray-500 dark:text-gray-400">(Optionnel, pour authentification complète)</span>
-        </label>
-        <input type="text" 
-               name="{{ form.two_fa_code.name }}" 
-               id="{{ form.two_fa_code.id_for_label }}"
-               value="{{ form.two_fa_code.value|default:'' }}"
-               maxlength="10"
-               class="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent"
-               placeholder="Code 2FA (optionnel)">
-        {% if form.two_fa_code.errors %}
-        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.two_fa_code.errors|striptags }}</div>
-        {% endif %}
-        <div class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-          💡 Si vous ne fournissez pas le code 2FA maintenant, vous devrez le saisir lors de la première synchronisation.
-        </div>
+        <label for="{{ form.two_fa_code.id_for_label }}" class="champ-libelle">{{ form.two_fa_code.label }} <span class="text-ink-3">(optionnel, pour authentification complète)</span></label>
+        <input type="text" name="{{ form.two_fa_code.name }}" id="{{ form.two_fa_code.id_for_label }}" value="{{ form.two_fa_code.value|default:'' }}" maxlength="10" class="champ num sm:w-56" placeholder="Code 2FA (optionnel)" aria-describedby="code-aide"{% if form.two_fa_code.errors %} aria-invalid="true"{% endif %}>
+        {% if form.two_fa_code.errors %}<p class="champ-erreur">{{ form.two_fa_code.errors|striptags }}</p>{% endif %}
+        <p class="champ-aide" id="code-aide">Sans code 2FA maintenant, vous devrez le saisir lors de la première synchronisation.</p>
       </div>
 
-      <!-- Synchronisation automatique -->
       <div class="md:col-span-2">
         <label class="flex items-center gap-3 cursor-pointer">
-          <input type="checkbox" 
-                 name="{{ form.auto_sync_enabled.name }}" 
-                 id="{{ form.auto_sync_enabled.id_for_label }}"
-                 {% if form.auto_sync_enabled.value %}checked{% endif %}
-                 class="w-5 h-5 text-primary dark:text-primary-light border-gray-300 dark:border-gray-600 rounded focus:ring-primary">
-          <span class="text-sm font-medium text-gray-700 dark:text-gray-300">
-            {{ form.auto_sync_enabled.label }}
-          </span>
+          <input type="checkbox" name="{{ form.auto_sync_enabled.name }}" id="{{ form.auto_sync_enabled.id_for_label }}" class="w-4 h-4" {% if form.auto_sync_enabled.value %}checked{% endif %}>
+          <span class="text-sm font-medium text-ink">{{ form.auto_sync_enabled.label }}</span>
         </label>
-        {% if form.auto_sync_enabled.errors %}
-        <div class="mt-1 text-sm text-red-600 dark:text-red-400">{{ form.auto_sync_enabled.errors|striptags }}</div>
-        {% endif %}
-        <div class="mt-1 text-xs text-gray-500 dark:text-gray-400 ml-8">
-          💡 Active la synchronisation automatique quotidienne de ce compte.
-        </div>
+        {% if form.auto_sync_enabled.errors %}<p class="champ-erreur">{{ form.auto_sync_enabled.errors|striptags }}</p>{% endif %}
+        <p class="champ-aide ml-7">Active la synchronisation automatique quotidienne de ce compte.</p>
       </div>
     </div>
 
-    <!-- Boutons -->
-    <div class="mt-8 flex gap-3">
-      <button type="submit" class="px-6 py-3 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark transition-colors shadow-sm">
-        ✓ Enregistrer
-      </button>
-      <a href="{% url 'bank_connections_list' %}" class="px-6 py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
-        Annuler
-      </a>
+    <div class="mt-6 flex flex-wrap gap-2">
+      <button type="submit" class="btn btn-principal">Enregistrer</button>
+      <a href="{% url 'bank_connections_list' %}" class="btn btn-secondaire">Annuler</a>
     </div>
   </form>
 
   <script>
     // Afficher/masquer les champs selon le provider
     function toggleProviderFields() {
-      const providerSelect = document.getElementById('{{ form.provider.id_for_label }}');
-      const provider = providerSelect.value;
-      const tradeRepublicFields = document.getElementById('trade-republic-fields');
-      const bankFields = document.getElementById('bank-fields');
-      
-      if (provider === 'trade_republic') {
-        tradeRepublicFields.style.display = 'block';
-        bankFields.style.display = 'none';
-      } else if (provider === 'boursorama' || provider === 'hellobank') {
-        tradeRepublicFields.style.display = 'none';
-        bankFields.style.display = 'block';
-      } else {
-        tradeRepublicFields.style.display = 'none';
-        bankFields.style.display = 'none';
-      }
+      const provider = document.getElementById('{{ form.provider.id_for_label }}').value;
+      document.getElementById('trade-republic-fields').style.display = provider === 'trade_republic' ? 'block' : 'none';
+      document.getElementById('bank-fields').style.display = (provider === 'boursorama' || provider === 'hellobank') ? 'block' : 'none';
     }
-    
-    // Vérifier au chargement de la page
-    document.addEventListener('DOMContentLoaded', function() {
-      toggleProviderFields();
-    });
+    document.addEventListener('DOMContentLoaded', toggleProviderFields);
   </script>
 {% endblock %}

@@ -2,122 +2,63 @@
 {% load finance_filters %}
 {% block title %}Détail du Log de Synchronisation{% endblock %}
 {% block content %}
-  <div class="mb-8">
-    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+  <div class="page-entete">
+    <div class="flex items-start gap-2 min-w-0">
+      <a href="{% url 'sync_logs_list' %}" class="btn btn-discret btn-icone -ml-2 shrink-0" aria-label="Retour aux logs">{% include "graphite/icone.html" with nom="retour" only %}</a>
       <div>
-        <h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">Détail du Log de Synchronisation</h1>
-        <p class="text-gray-600 dark:text-gray-400">Informations complètes sur cette synchronisation</p>
+        <h1 class="page-titre">Détail de la synchronisation</h1>
+        <p class="page-sous-titre">Informations complètes sur cette synchronisation.</p>
       </div>
-      <a href="{% url 'sync_logs_list' %}" class="px-4 py-2 bg-gray-600 text-white rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors shadow-sm">
-        Retour aux logs
-      </a>
     </div>
   </div>
 
-  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-    <!-- Informations principales -->
-    <div class="lg:col-span-2 space-y-6">
-      <!-- Informations générales -->
-      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Informations générales</h2>
-        <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Connexion bancaire</dt>
-            <dd class="mt-1 text-sm text-gray-900 dark:text-white">
-              <a href="{% url 'bank_connection_update' log.bank_connection.id %}" class="text-primary dark:text-primary-light hover:underline">
-                {{ log.bank_connection.account_name }}
-              </a>
-            </dd>
-          </div>
-          <div>
-            <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Provider</dt>
-            <dd class="mt-1">
-              <span class="px-3 py-1 text-xs font-medium rounded-full {% if log.bank_connection.provider == 'trade_republic' %}bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-300{% elif log.bank_connection.provider == 'boursorama' %}bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300{% elif log.bank_connection.provider == 'hellobank' %}bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300{% else %}bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-100{% endif %}">
-                {{ log.bank_connection.get_provider_display }}
-              </span>
-            </dd>
-          </div>
-          <div>
-            <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Type de synchronisation</dt>
-            <dd class="mt-1 text-sm text-gray-900 dark:text-white">{{ log.get_sync_type_display }}</dd>
-          </div>
-          <div>
-            <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Statut</dt>
-            <dd class="mt-1">
-              {% if log.status == 'success' %}
-                <span class="px-3 py-1 text-xs font-medium bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300 rounded-full">✓ Succès</span>
-              {% elif log.status == 'error' %}
-                <span class="px-3 py-1 text-xs font-medium bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 rounded-full">✗ Erreur</span>
-              {% else %}
-                <span class="px-3 py-1 text-xs font-medium bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300 rounded-full">⟳ En cours</span>
-              {% endif %}
-            </dd>
-          </div>
-          <div>
-            <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Date de début</dt>
-            <dd class="mt-1 text-sm text-gray-900 dark:text-white">{{ log.started_at|date:"d/m/Y H:i:s" }}</dd>
-          </div>
-          <div>
-            <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Date de fin</dt>
-            <dd class="mt-1 text-sm text-gray-900 dark:text-white">
-              {% if log.completed_at %}
-                {{ log.completed_at|date:"d/m/Y H:i:s" }}
-              {% else %}
-                <span class="text-gray-400">En cours...</span>
-              {% endif %}
-            </dd>
-          </div>
-          <div>
-            <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Durée</dt>
-            <dd class="mt-1 text-sm text-gray-900 dark:text-white">{{ log.duration_formatted }}</dd>
-          </div>
-          <div>
-            <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Transactions synchronisées</dt>
-            <dd class="mt-1 text-sm text-gray-900 dark:text-white font-semibold">{{ log.transactions_count }}</dd>
-          </div>
-        </dl>
-      </div>
-
-      <!-- Message d'erreur -->
-      {% if log.status == 'error' and error_message_formatted %}
-        <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-red-200 dark:border-red-800 p-6">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-lg font-semibold text-red-900 dark:text-red-300">Message d'erreur</h2>
-            <button onclick="copyError()" class="px-3 py-1 bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 rounded-lg text-sm font-medium hover:bg-red-200 dark:hover:bg-red-900/40 transition-colors flex items-center gap-2">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-              </svg>
-              Copier
-            </button>
-          </div>
-          <div id="error-message" class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 font-mono text-sm text-red-900 dark:text-red-300 whitespace-pre-wrap overflow-x-auto">{{ error_message_formatted }}</div>
-          <div id="copy-feedback" class="hidden mt-2 text-sm text-green-600 dark:text-green-400">✓ Message copié dans le presse-papier</div>
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+    <div class="lg:col-span-2 flex flex-col gap-4 min-w-0">
+      <section class="carte" aria-labelledby="t-infos">
+        <div class="carte-entete">
+          <h2 class="carte-titre" id="t-infos">Informations générales</h2>
+          {% if log.status == 'success' %}<span class="etat etat-ok">Succès</span>
+          {% elif log.status == 'error' %}<span class="etat etat-crit">Erreur</span>
+          {% else %}<span class="etat etat-info">En cours</span>{% endif %}
         </div>
+        <dl class="carte-corps details">
+          <div><dt>Connexion bancaire</dt><dd><a href="{% url 'bank_connection_update' log.bank_connection.id %}" class="lien">{{ log.bank_connection.account_name }}</a></dd></div>
+          <div><dt>Provider</dt><dd><span class="etiquette">{{ log.bank_connection.get_provider_display }}</span></dd></div>
+          <div><dt>Type de synchronisation</dt><dd>{{ log.get_sync_type_display }}</dd></div>
+          <div><dt>Transactions synchronisées</dt><dd class="num font-semibold">{{ log.transactions_count }}</dd></div>
+          <div><dt>Date de début</dt><dd class="num">{{ log.started_at|date:"d/m/Y H:i:s" }}</dd></div>
+          <div><dt>Date de fin</dt><dd class="num">{% if log.completed_at %}{{ log.completed_at|date:"d/m/Y H:i:s" }}{% else %}<span class="text-ink-3">En cours...</span>{% endif %}</dd></div>
+          <div><dt>Durée</dt><dd class="num">{{ log.duration_formatted }}</dd></div>
+        </dl>
+      </section>
+
+      {% if log.status == 'error' and error_message_formatted %}
+        <section class="carte" aria-labelledby="t-erreur">
+          <div class="carte-entete">
+            <h2 class="carte-titre" id="t-erreur">Message d'erreur</h2>
+            <button type="button" onclick="copyError()" class="btn btn-secondaire btn-petit">{% include "graphite/icone.html" with nom="document" only %}Copier</button>
+          </div>
+          <div class="carte-corps">
+            <div id="error-message" class="bloc-code">{{ error_message_formatted }}</div>
+            <p id="copy-feedback" class="hidden mt-2"><span class="etat etat-ok">Message copié dans le presse-papier</span></p>
+          </div>
+        </section>
       {% endif %}
     </div>
 
-    <!-- Actions rapides -->
-    <div class="space-y-6">
-      <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Actions</h2>
-        <div class="space-y-2">
-          <a href="{% url 'sync_logs_list' %}" class="block w-full px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors text-center">
-            Retour aux logs
-          </a>
-          <a href="{% url 'bank_connection_update' log.bank_connection.id %}" class="block w-full px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors text-center">
-            Voir la connexion
-          </a>
-          {% if log.status == 'error' %}
-            <form method="post" action="{% url 'bank_connection_sync' log.bank_connection.id %}" class="mt-2">
-              {% csrf_token %}
-              <button type="submit" class="w-full px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors">
-                Réessayer la synchronisation
-              </button>
-            </form>
-          {% endif %}
-        </div>
+    <section class="carte self-start" aria-labelledby="t-actions">
+      <div class="carte-entete"><h2 class="carte-titre" id="t-actions">Actions</h2></div>
+      <div class="carte-corps flex flex-col gap-2">
+        {% if log.status == 'error' %}
+          <form method="post" action="{% url 'bank_connection_sync' log.bank_connection.id %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-principal w-full">{% include "graphite/icone.html" with nom="actualiser" only %}Réessayer la synchronisation</button>
+          </form>
+        {% endif %}
+        <a href="{% url 'bank_connection_update' log.bank_connection.id %}" class="btn btn-secondaire w-full">Voir la connexion</a>
+        <a href="{% url 'sync_logs_list' %}" class="btn btn-discret w-full">Retour aux logs</a>
       </div>
-    </div>
+    </section>
   </div>
 
   <script>
@@ -126,9 +67,7 @@
       navigator.clipboard.writeText(errorMessage).then(function() {
         const feedback = document.getElementById('copy-feedback');
         feedback.classList.remove('hidden');
-        setTimeout(function() {
-          feedback.classList.add('hidden');
-        }, 3000);
+        setTimeout(function() { feedback.classList.add('hidden'); }, 3000);
       });
     }
   </script>

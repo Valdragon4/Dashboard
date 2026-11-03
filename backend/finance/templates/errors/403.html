@@ -7,12 +7,6 @@
   Si vous venez de vous connecter, rechargez la page et réessayez.
 {% endblock %}
 {% block actions %}
-  <a href="/"
-     class="px-6 py-3 bg-gradient-to-r from-primary to-primary-dark text-white font-semibold rounded-xl shadow-md hover:shadow-lg transition-all text-sm">
-    Retour au dashboard
-  </a>
-  <a href="{% url 'login' %}"
-     class="px-6 py-3 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-semibold rounded-xl border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors text-sm">
-    Se connecter
-  </a>
+  <a class="btn btn-principal" href="/">{% include "graphite/icone.html" with nom="accueil" only %}Retour au tableau de bord</a>
+  <a class="btn btn-secondaire" href="{% url 'login' %}">{% include "graphite/icone.html" with nom="cle" only %}Se connecter</a>
 {% endblock %}

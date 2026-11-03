@@ -1,74 +1,69 @@
 {% extends 'base.html' %}
 {% block title %}Comptes {{ connection.account_name }}{% endblock %}
 {% block content %}
-  <div class="mb-8">
-    <div class="flex items-center gap-3 mb-2">
-      <a href="{% url 'bank_connections_list' %}" class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200" aria-label="Retour">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-        </svg>
-      </a>
-      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Comptes {{ connection.account_name }}</h1>
+  <div class="page-entete">
+    <div class="flex items-start gap-2 min-w-0">
+      <a href="{% url 'bank_connections_list' %}" class="btn btn-discret btn-icone -ml-2 shrink-0" aria-label="Retour">{% include "graphite/icone.html" with nom="retour" only %}</a>
+      <div>
+        <h1 class="page-titre">Comptes {{ connection.account_name }}</h1>
+        <p class="page-sous-titre">
+          Rattachez chaque compte bancaire à un compte du tableau de bord.
+          {% if consent.valid_until %}Accès valable jusqu'au <span class="num">{{ consent.valid_until|date:"d/m/Y" }}</span>.{% endif %}
+        </p>
+      </div>
     </div>
-    <p class="text-gray-600 dark:text-gray-400 ml-9">
-      Rattachez chaque compte bancaire à un compte du tableau de bord.
-      {% if consent.valid_until %}Accès valable jusqu'au {{ consent.valid_until|date:"d/m/Y" }}.{% endif %}
-    </p>
   </div>
 
-  {% if messages %}
-    <div class="mb-6">
-      {% for message in messages %}
-        <div class="mb-3 p-4 rounded-lg {% if message.tags == 'error' %}bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300{% elif message.tags == 'success' %}bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-300{% else %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300{% endif %}">{{ message }}</div>
-      {% endfor %}
-    </div>
-  {% endif %}
-
-  <form method="post" class="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 max-w-2xl">
+  <form method="post" class="carte carte-corps sm:p-6 max-w-2xl">
     {% csrf_token %}
     {% if links %}
-      <div class="grid gap-4">
+      <div class="flex flex-col gap-3">
         {% for link in links %}
-          <div class="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-xl border border-gray-100 dark:border-gray-600">
-            <p class="text-sm font-medium text-gray-900 dark:text-white">
+          <fieldset class="rounded-card border border-line bg-sunken p-3 sm:p-4">
+            <legend class="sr-only">{{ link.name }}</legend>
+            <p class="text-sm font-medium text-ink">
               {{ link.name }}
-              <span class="text-gray-500 dark:text-gray-400 font-normal">
+              <span class="text-ink-3 font-normal">
                 · {% if link.type == 'CACC' %}Compte courant{% elif link.type == 'SVGS' %}Épargne{% elif link.type == 'CARD' %}Carte{% else %}{{ link.type|default:"Compte" }}{% endif %}
-                {% if link.raw.iban_last4 %}· IBAN …{{ link.raw.iban_last4 }}{% endif %}
-                · {{ link.currency }}
+                {% if link.raw.iban_last4 %}· IBAN <span class="num">…{{ link.raw.iban_last4 }}</span>{% endif %}
+                · <span class="num">{{ link.currency }}</span>
               </span>
             </p>
-            <label class="block mt-2 text-sm">
-              <span class="sr-only">Compte du tableau de bord pour {{ link.name }}</span>
-              <select name="link_{{ link.id }}" class="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
+            <div class="mt-2">
+              <label class="sr-only" for="link_{{ link.id }}">Compte du tableau de bord pour {{ link.name }}</label>
+              <select class="champ" id="link_{{ link.id }}" name="link_{{ link.id }}">
                 <option value="">— Ne pas synchroniser —</option>
                 <option value="new">+ Créer un nouveau compte</option>
                 {% for a in user_accounts %}
                   <option value="{{ a.id }}" {% if link.account_id == a.id %}selected{% endif %}>{{ a.name }} ({{ a.get_type_display }})</option>
                 {% endfor %}
               </select>
-            </label>
-            <label class="block mt-3 text-sm">
-              <span class="text-gray-700 dark:text-gray-300">Nom dans le tableau de bord</span>
-              <input type="text" name="name_{{ link.id }}" maxlength="120"
+            </div>
+            <div class="mt-3">
+              <label class="champ-libelle" for="name_{{ link.id }}">Nom dans le tableau de bord</label>
+              <input class="champ" type="text" id="name_{{ link.id }}" name="name_{{ link.id }}" maxlength="120"
                      value="{% if link.account %}{{ link.account.name }}{% endif %}"
                      placeholder="{% for k, v in suggested_names.items %}{% if k == link.id %}{{ v }}{% endif %}{% endfor %}"
-                     class="mt-1 w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-              <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">Vide : nom actuel conservé (ou nom proposé pour un nouveau compte).</span>
-            </label>
-          </div>
+                     aria-describedby="name_{{ link.id }}-aide">
+              <p class="champ-aide" id="name_{{ link.id }}-aide">Vide : nom actuel conservé (ou nom proposé pour un nouveau compte).</p>
+            </div>
+          </fieldset>
         {% endfor %}
       </div>
-      <p class="mt-4 text-xs text-gray-500 dark:text-gray-400">
+      <p class="mt-4 text-xs text-ink-3">
         L'historique disponible est limité par la banque (souvent 90 jours). Le solde du compte est recalé sur le solde réel à chaque synchronisation.
       </p>
-      <label class="flex items-center gap-2 mt-4 text-sm text-gray-700 dark:text-gray-300">
-        <input type="checkbox" name="sync_now" value="1" checked class="rounded border-gray-300 dark:border-gray-600 text-primary dark:text-primary-light">
+      <label class="flex items-center gap-2 mt-4 text-sm text-ink-2">
+        <input type="checkbox" name="sync_now" value="1" checked class="w-4 h-4">
         Synchroniser maintenant
       </label>
-      <button type="submit" class="mt-5 w-full px-4 py-2.5 bg-primary text-white rounded-lg text-sm font-semibold hover:bg-primary-dark transition-colors shadow-sm">Enregistrer</button>
+      <button type="submit" class="btn btn-principal w-full mt-5">Enregistrer</button>
     {% else %}
-      <p class="text-sm text-gray-600 dark:text-gray-400">La banque n'a renvoyé aucun compte pour ce consentement.</p>
+      <div class="vide">
+        <div class="vide-pastille">{% include "graphite/icone.html" with nom="banque" only %}</div>
+        <p class="font-semibold text-ink">Aucun compte renvoyé</p>
+        <p class="mt-1 text-sm text-ink-3">La banque n'a renvoyé aucun compte pour ce consentement. Renouvelez l'accès depuis la liste des connexions.</p>
+      </div>
     {% endif %}
   </form>
 {% endblock %}

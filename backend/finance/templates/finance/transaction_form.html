@@ -1,23 +1,36 @@
 {% extends 'base.html' %}
 {% block title %}{{ title }}{% endblock %}
 {% block content %}
-  <h1 class="text-2xl font-semibold mb-6">{{ title }}</h1>
-  <form method="post" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6 max-w-xl">
+  <div class="page-entete">
+    <div class="flex items-start gap-2 min-w-0">
+      <a href="/transactions/" class="btn btn-discret btn-icone -ml-2 shrink-0" aria-label="Retour aux transactions">{% include "graphite/icone.html" with nom="retour" only %}</a>
+      <div>
+        <h1 class="page-titre">{{ title }}</h1>
+        <p class="page-sous-titre">Saisie manuelle d'une opération sur l'un de vos comptes.</p>
+      </div>
+    </div>
+  </div>
+
+  <form method="post" class="carte carte-corps sm:p-6 max-w-xl">
     {% csrf_token %}
-    {{ form.non_field_errors }}
+    {% if form.non_field_errors %}
+    <div class="message message-crit mb-5" role="alert">
+      {% include "graphite/icone.html" with nom="crit" only %}
+      <div class="flex-1">{{ form.non_field_errors }}</div>
+    </div>
+    {% endif %}
     <div class="grid grid-cols-1 gap-4">
       {% for field in form %}
-        <label class="block">
-          <span class="text-sm text-gray-600 dark:text-gray-400">{{ field.label }}</span>
+        <div>
+          <label class="champ-libelle" for="{{ field.id_for_label }}">{{ field.label }}</label>
           {{ field }}
-          {% if field.errors %}<div class="text-sm text-red-600 dark:text-red-400">{{ field.errors|striptags }}</div>{% endif %}
-        </label>
+          {% if field.errors %}<p class="champ-erreur">{{ field.errors|striptags }}</p>{% endif %}
+        </div>
       {% endfor %}
     </div>
-    <div class="mt-6">
-      <button class="px-4 py-2 bg-primary text-white rounded">Enregistrer</button>
+    <div class="mt-6 flex flex-wrap gap-2">
+      <button class="btn btn-principal">Enregistrer</button>
+      <a href="/transactions/" class="btn btn-secondaire">Annuler</a>
     </div>
   </form>
 {% endblock %}
-
-

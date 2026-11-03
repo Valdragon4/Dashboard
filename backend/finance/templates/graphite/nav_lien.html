@@ -1,0 +1,1 @@
+{# Lien de barre latérale. href, icone, libelle, actif (bool), compteur (option). #}<a class="nav-lien" href="{{ href }}"{% if actif %} aria-current="page"{% endif %}>{% include "graphite/icone.html" with nom=icone only %}{{ libelle }}{% if compteur %}<span class="nav-compteur">{{ compteur }}</span>{% endif %}</a>

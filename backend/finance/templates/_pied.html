@@ -1,0 +1,13 @@
+{# Pied de la barre latérale : identité et déconnexion (après la bascule du mode sombre de la coquille). #}{% if user.is_authenticated %}
+<div class="flex items-center gap-3 px-5 py-2 min-w-0">
+  <span class="avatar" aria-hidden="true">{{ user.username|first|upper }}</span>
+  <span class="text-sm min-w-0">
+    <span class="block font-medium truncate">{{ user.username }}</span>
+    {% if user.email %}<span class="block text-xs text-side-ink-3 truncate">{{ user.email }}</span>{% endif %}
+  </span>
+</div>
+<form method="post" action="{% url 'logout' %}">
+  {% csrf_token %}
+  <button type="submit" class="nav-lien">{% include "graphite/icone.html" with nom="fleche-droite" only %}Se déconnecter</button>
+</form>
+{% endif %}

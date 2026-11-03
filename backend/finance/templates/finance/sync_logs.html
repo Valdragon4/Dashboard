@@ -2,253 +2,180 @@
 {% load finance_filters %}
 {% block title %}Logs de Synchronisation{% endblock %}
 {% block content %}
-  <div class="mb-8">
-    <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-      <div>
-        <h1 class="text-3xl font-bold text-gray-900 dark:text-white mb-2">Logs de Synchronisation</h1>
-        <p class="text-gray-600 dark:text-gray-400">Consultez l'historique et diagnostiquez les problèmes de synchronisation</p>
-      </div>
-      <div class="flex gap-2">
-        <a href="{% url 'sync_logs_export' %}?{{ request.GET.urlencode }}" class="px-4 py-2 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 transition-colors shadow-sm flex items-center gap-2">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-          </svg>
-          Exporter en CSV
-        </a>
-        <a href="{% url 'bank_connections_list' %}" class="px-4 py-2 bg-gray-600 text-white rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors shadow-sm">
-          Retour aux connexions
-        </a>
-      </div>
+  <div class="page-entete">
+    <div>
+      <h1 class="page-titre">Journal de synchronisation</h1>
+      <p class="page-sous-titre">Historique des synchronisations, pour repérer et diagnostiquer les échecs.</p>
+    </div>
+    <div class="page-actions">
+      <a href="{% url 'bank_connections_list' %}" class="btn btn-discret">{% include "graphite/icone.html" with nom="retour" only %}Retour aux connexions</a>
+      <a href="{% url 'sync_logs_export' %}?{{ request.GET.urlencode }}" class="btn btn-secondaire">{% include "graphite/icone.html" with nom="document" only %}Exporter en CSV</a>
     </div>
   </div>
 
   {% if alerts %}
-    <div class="mb-6">
+    <div class="flex flex-col gap-2 mb-6">
       {% for alert in alerts %}
-        <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-3">
-          <div class="flex items-center gap-2">
-            <svg class="w-5 h-5 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
-            </svg>
-            <div class="flex-1">
-              <span class="font-semibold text-red-800 dark:text-red-300">Alerte : Échecs répétés</span>
-              <p class="text-sm text-red-700 dark:text-red-300 mt-1">
-                La connexion <strong>{{ alert.connection.account_name }}</strong> a échoué {{ alert.failures }} fois consécutivement.
-                <a href="?connection_id={{ alert.connection_id }}&status=error" class="underline font-medium">Voir les erreurs</a>
-              </p>
-            </div>
-          </div>
+        <div class="message message-crit" role="alert">
+          {% include "graphite/icone.html" with nom="crit" only %}
+          <p class="flex-1"><strong>Échecs répétés :</strong> la connexion <strong>{{ alert.connection.account_name }}</strong> a échoué {{ alert.failures }} fois de suite.
+            <a href="?connection_id={{ alert.connection_id }}&status=error" class="lien">Voir les erreurs</a></p>
         </div>
       {% endfor %}
     </div>
   {% endif %}
 
   <!-- Statistiques -->
-  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-      <div class="text-sm text-gray-600 dark:text-gray-400 mb-1">Taux de succès</div>
-      <div class="text-2xl font-bold {% if stats.success_rate >= 90 %}text-green-600 dark:text-green-400{% elif stats.success_rate >= 70 %}text-yellow-600 dark:text-yellow-400{% else %}text-red-600 dark:text-red-400{% endif %}">
-        {{ stats.success_rate }}%
-      </div>
-      <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ stats.success_count }} succès / {{ stats.total_syncs }} total</div>
+  <section aria-label="Statistiques" class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+    <div class="carte carte-corps">
+      <p class="kpi-libelle">Taux de succès</p>
+      <p class="kpi-valeur">{{ stats.success_rate }} %</p>
+      <p class="kpi-ecart">{% if stats.success_rate >= 90 %}<span class="etat etat-ok">Stable</span>{% elif stats.success_rate >= 70 %}<span class="etat etat-warn">À surveiller</span>{% else %}<span class="etat etat-crit">Instable</span>{% endif %}</p>
+      <p class="kpi-ecart">{{ stats.success_count }} succès / {{ stats.total_syncs }} total</p>
     </div>
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-      <div class="text-sm text-gray-600 dark:text-gray-400 mb-1">Synchronisations</div>
-      <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ stats.total_syncs }}</div>
-      <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-        <span class="text-green-600 dark:text-green-400">{{ stats.success_count }} succès</span>,
-        <span class="text-red-600 dark:text-red-400">{{ stats.error_count }} erreurs</span>,
-        <span class="text-yellow-600 dark:text-yellow-400">{{ stats.in_progress_count }} en cours</span>
-      </div>
+    <div class="carte carte-corps">
+      <p class="kpi-libelle">Synchronisations</p>
+      <p class="kpi-valeur">{{ stats.total_syncs }}</p>
+      <p class="kpi-ecart">{{ stats.success_count }} succès, {{ stats.error_count }} erreurs, {{ stats.in_progress_count }} en cours</p>
     </div>
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-      <div class="text-sm text-gray-600 dark:text-gray-400 mb-1">Temps moyen</div>
-      <div class="text-2xl font-bold text-gray-900 dark:text-white">
-        {% if stats.avg_duration_seconds > 0 %}
-          {{ stats.avg_duration_seconds|floatformat:1 }}s
-        {% else %}
-          -
-        {% endif %}
-      </div>
-      <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">Durée moyenne de synchronisation</div>
+    <div class="carte carte-corps">
+      <p class="kpi-libelle">Temps moyen</p>
+      <p class="kpi-valeur">{% if stats.avg_duration_seconds > 0 %}{{ stats.avg_duration_seconds|floatformat:1 }} s{% else %}-{% endif %}</p>
+      <p class="kpi-ecart">Durée moyenne de synchronisation</p>
     </div>
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4">
-      <div class="text-sm text-gray-600 dark:text-gray-400 mb-1">Transactions</div>
-      <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ stats.total_transactions }}</div>
-      <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">Total synchronisé</div>
+    <div class="carte carte-corps">
+      <p class="kpi-libelle">Transactions</p>
+      <p class="kpi-valeur">{{ stats.total_transactions }}</p>
+      <p class="kpi-ecart">Total synchronisé</p>
     </div>
-  </div>
+  </section>
 
-  <!-- Statistiques par provider -->
   {% if stats.provider_stats %}
-    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4 mb-6">
-      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">Taux de succès par provider</h2>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+    <section class="carte mb-6" aria-labelledby="t-providers">
+      <div class="carte-entete"><h2 class="carte-titre" id="t-providers">Taux de succès par provider</h2></div>
+      <ul class="carte-corps grid grid-cols-1 md:grid-cols-3 gap-3">
         {% for provider_code, provider_stat in stats.provider_stats.items %}
-          <div class="border border-gray-200 dark:border-gray-700 rounded-lg p-3">
-            <div class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ provider_stat.name }}</div>
-            <div class="text-xl font-bold {% if provider_stat.success_rate >= 90 %}text-green-600 dark:text-green-400{% elif provider_stat.success_rate >= 70 %}text-yellow-600 dark:text-yellow-400{% else %}text-red-600 dark:text-red-400{% endif %} mt-1">
-              {{ provider_stat.success_rate }}%
-            </div>
-            <div class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ provider_stat.total }} synchronisations</div>
-          </div>
+          <li class="rounded-ctl border border-line p-3">
+            <p class="text-sm font-medium text-ink">{{ provider_stat.name }}</p>
+            <p class="num text-lg font-semibold text-ink mt-1">{{ provider_stat.success_rate }} %</p>
+            <p class="flex items-center justify-between gap-2 mt-1">
+              <span class="text-xs text-ink-3">{{ provider_stat.total }} synchronisations</span>
+              {% if provider_stat.success_rate >= 90 %}<span class="etat etat-ok">Stable</span>{% elif provider_stat.success_rate >= 70 %}<span class="etat etat-warn">À surveiller</span>{% else %}<span class="etat etat-crit">Instable</span>{% endif %}
+            </p>
+          </li>
         {% endfor %}
-      </div>
-    </div>
+      </ul>
+    </section>
   {% endif %}
 
   <!-- Filtres -->
-  <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-4 mb-6">
-    <form method="get" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-      <div>
-        <label for="connection_id" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Connexion</label>
-        <select name="connection_id" id="connection_id" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-          <option value="">Toutes</option>
-          {% for connection in connections %}
-            <option value="{{ connection.id }}" {% if filters.connection_id == connection.id|stringformat:"s" %}selected{% endif %}>
-              {{ connection.account_name }}
-            </option>
-          {% endfor %}
-        </select>
-      </div>
-      <div>
-        <label for="status" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Statut</label>
-        <select name="status" id="status" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-          <option value="">Tous</option>
-          <option value="success" {% if filters.status == "success" %}selected{% endif %}>Succès</option>
-          <option value="error" {% if filters.status == "error" %}selected{% endif %}>Erreur</option>
-          <option value="started" {% if filters.status == "started" %}selected{% endif %}>En cours</option>
-        </select>
-      </div>
-      <div>
-        <label for="sync_type" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Type</label>
-        <select name="sync_type" id="sync_type" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-          <option value="">Tous</option>
-          <option value="manual" {% if filters.sync_type == "manual" %}selected{% endif %}>Manuelle</option>
-          <option value="automatic" {% if filters.sync_type == "automatic" %}selected{% endif %}>Automatique</option>
-        </select>
-      </div>
-      <div>
-        <label for="date_from" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date début</label>
-        <input type="date" name="date_from" id="date_from" value="{{ filters.date_from }}" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-      </div>
-      <div>
-        <label for="date_to" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Date fin</label>
-        <input type="date" name="date_to" id="date_to" value="{{ filters.date_to }}" class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-      </div>
-      <div class="flex gap-2 md:col-span-2 lg:col-span-5">
-        <button type="submit" class="px-4 py-2 bg-primary text-white rounded-lg text-sm font-medium hover:bg-primary-dark transition-colors">
-          Filtrer
-        </button>
-        <a href="{% url 'sync_logs_list' %}" class="px-4 py-2 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-300 transition-colors">
-          Réinitialiser
-        </a>
-      </div>
-    </form>
-  </div>
+  <form method="get" class="carte carte-corps mb-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4" aria-label="Filtres">
+    <div>
+      <label for="connection_id" class="champ-libelle">Connexion</label>
+      <select name="connection_id" id="connection_id" class="champ">
+        <option value="">Toutes</option>
+        {% for connection in connections %}
+          <option value="{{ connection.id }}" {% if filters.connection_id == connection.id|stringformat:"s" %}selected{% endif %}>{{ connection.account_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="status" class="champ-libelle">Statut</label>
+      <select name="status" id="status" class="champ">
+        <option value="">Tous</option>
+        <option value="success" {% if filters.status == "success" %}selected{% endif %}>Succès</option>
+        <option value="error" {% if filters.status == "error" %}selected{% endif %}>Erreur</option>
+        <option value="started" {% if filters.status == "started" %}selected{% endif %}>En cours</option>
+      </select>
+    </div>
+    <div>
+      <label for="sync_type" class="champ-libelle">Type</label>
+      <select name="sync_type" id="sync_type" class="champ">
+        <option value="">Tous</option>
+        <option value="manual" {% if filters.sync_type == "manual" %}selected{% endif %}>Manuelle</option>
+        <option value="automatic" {% if filters.sync_type == "automatic" %}selected{% endif %}>Automatique</option>
+      </select>
+    </div>
+    <div>
+      <label for="date_from" class="champ-libelle">Date début</label>
+      <input type="date" name="date_from" id="date_from" value="{{ filters.date_from }}" class="champ">
+    </div>
+    <div>
+      <label for="date_to" class="champ-libelle">Date fin</label>
+      <input type="date" name="date_to" id="date_to" value="{{ filters.date_to }}" class="champ">
+    </div>
+    <div class="flex flex-wrap gap-2 sm:col-span-2 lg:col-span-5">
+      <button type="submit" class="btn btn-principal">Filtrer</button>
+      <a href="{% url 'sync_logs_list' %}" class="btn btn-secondaire">Réinitialiser</a>
+    </div>
+  </form>
 
-  <!-- Liste des logs -->
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-    {% if logs %}
-      <div class="overflow-x-auto">
-        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
-          <thead class="bg-gradient-to-r from-gray-50 dark:from-gray-800 to-gray-100 dark:to-gray-900">
+  <!-- Journal -->
+  {% if logs %}
+    <div class="tableau-cadre">
+      <div class="tableau-defile">
+        <table class="tableau">
+          <thead>
             <tr>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Connexion</th>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Provider</th>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Type</th>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Statut</th>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Date début</th>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Date fin</th>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Durée</th>
-              <th class="px-6 py-4 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Transactions</th>
-              <th class="px-6 py-4 text-right text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wider">Actions</th>
+              <th>Connexion</th>
+              <th class="hidden lg:table-cell">Provider</th>
+              <th class="hidden md:table-cell">Type</th>
+              <th>Statut</th>
+              <th class="hidden md:table-cell">Début</th>
+              <th class="hidden xl:table-cell">Fin</th>
+              <th class="hidden lg:table-cell">Durée</th>
+              <th class="droite hidden sm:table-cell">Transactions</th>
+              <th class="droite">Actions</th>
             </tr>
           </thead>
-          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+          <tbody>
             {% for log in logs %}
-            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-              <td class="px-6 py-4 whitespace-nowrap">
-                <div class="font-semibold text-gray-900 dark:text-white">{{ log.bank_connection.account_name }}</div>
-                <a href="{% url 'bank_connection_update' log.bank_connection.id %}" class="text-xs text-primary dark:text-primary-light hover:underline">
-                  Voir la connexion
-                </a>
+            <tr>
+              <td>
+                <p class="principal">{{ log.bank_connection.account_name }}</p>
+                <a href="{% url 'bank_connection_update' log.bank_connection.id %}" class="lien text-xs">Voir la connexion</a>
               </td>
-              <td class="px-6 py-4 whitespace-nowrap">
-                <span class="px-3 py-1 text-xs font-medium rounded-full {% if log.bank_connection.provider == 'trade_republic' %}bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-300{% elif log.bank_connection.provider == 'boursorama' %}bg-blue-100 dark:bg-blue-900/40 text-blue-800 dark:text-blue-300{% elif log.bank_connection.provider == 'hellobank' %}bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300{% else %}bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-100{% endif %}">
-                  {{ log.bank_connection.get_provider_display }}
-                </span>
+              <td class="hidden lg:table-cell"><span class="etiquette">{{ log.bank_connection.get_provider_display }}</span></td>
+              <td class="hidden md:table-cell">{{ log.get_sync_type_display }}</td>
+              <td>
+                {% if log.status == 'success' %}<span class="etat etat-ok">Succès</span>
+                {% elif log.status == 'error' %}<span class="etat etat-crit">Erreur</span>
+                {% else %}<span class="etat etat-info">En cours</span>{% endif %}
               </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
-                {{ log.get_sync_type_display }}
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap">
-                {% if log.status == 'success' %}
-                  <span class="px-2 py-1 text-xs font-medium bg-green-100 dark:bg-green-900/40 text-green-800 dark:text-green-300 rounded-full">✓ Succès</span>
-                {% elif log.status == 'error' %}
-                  <span class="px-2 py-1 text-xs font-medium bg-red-100 dark:bg-red-900/40 text-red-800 dark:text-red-300 rounded-full">✗ Erreur</span>
-                {% else %}
-                  <span class="px-2 py-1 text-xs font-medium bg-yellow-100 dark:bg-yellow-900/40 text-yellow-800 dark:text-yellow-300 rounded-full">⟳ En cours</span>
-                {% endif %}
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
-                {{ log.started_at|date:"d/m/Y H:i" }}
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
-                {% if log.completed_at %}
-                  {{ log.completed_at|date:"d/m/Y H:i" }}
-                {% else %}
-                  <span class="text-gray-400">-</span>
-                {% endif %}
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
-                {{ log.duration_formatted }}
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 dark:text-gray-300">
-                {{ log.transactions_count }}
-              </td>
-              <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                {% if log.status == 'error' %}
-                  <a href="{% url 'sync_log_detail' log.id %}" class="text-primary dark:text-primary-light hover:text-primary-dark">
-                    Détails
-                  </a>
-                {% else %}
-                  <a href="{% url 'sync_log_detail' log.id %}" class="text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-100">
-                    Voir
-                  </a>
-                {% endif %}
+              <td class="num whitespace-nowrap hidden md:table-cell">{{ log.started_at|date:"d/m/Y H:i" }}</td>
+              <td class="num whitespace-nowrap hidden xl:table-cell">{% if log.completed_at %}{{ log.completed_at|date:"d/m/Y H:i" }}{% else %}<span class="text-ink-3">-</span>{% endif %}</td>
+              <td class="num hidden lg:table-cell">{{ log.duration_formatted }}</td>
+              <td class="droite num hidden sm:table-cell">{{ log.transactions_count }}</td>
+              <td class="droite">
+                <a href="{% url 'sync_log_detail' log.id %}" class="btn btn-petit {% if log.status == 'error' %}btn-secondaire{% else %}btn-discret{% endif %}">{% if log.status == 'error' %}Détails{% else %}Voir{% endif %}</a>
               </td>
             </tr>
             {% endfor %}
           </tbody>
         </table>
       </div>
-      
-      {% if logs.has_other_pages %}
-        <div class="mt-4 px-6 pb-4 flex items-center justify-center">
-          <form method="get" class="flex items-center gap-2 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 px-4 py-2">
-            <label for="page" class="text-xs font-medium text-gray-700 dark:text-gray-300">Page:</label>
-            <select name="page" id="page" onchange="this.form.submit()" class="border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-primary focus:border-transparent">
-              {% for page_num in logs.paginator.page_range %}
-                <option value="{{ page_num }}" {% if page_num == logs.number %}selected{% endif %}>
-                  {{ page_num }}
-                </option>
-              {% endfor %}
-            </select>
-            <span class="text-xs text-gray-600 dark:text-gray-400">sur {{ logs.paginator.num_pages }}</span>
-            {% for key, value in filter_params.items %}
-              <input type="hidden" name="{{ key }}" value="{{ value }}">
-            {% endfor %}
-          </form>
-        </div>
-      {% endif %}
-    {% else %}
-      <div class="p-8 text-center text-gray-500 dark:text-gray-400">
-        <p>Aucun log de synchronisation trouvé.</p>
-        {% if filters.connection_id or filters.status or filters.sync_type or filters.date_from or filters.date_to %}
-          <a href="{% url 'sync_logs_list' %}" class="text-primary dark:text-primary-light hover:underline mt-2 inline-block">Réinitialiser les filtres</a>
-        {% endif %}
-      </div>
+    </div>
+
+    {% if logs.has_other_pages %}
+      <form method="get" class="mt-4 flex items-center justify-center gap-2 text-sm">
+        <label for="page" class="text-ink-2">Page</label>
+        <select name="page" id="page" onchange="this.form.submit()" class="champ w-auto">
+          {% for page_num in logs.paginator.page_range %}
+            <option value="{{ page_num }}" {% if page_num == logs.number %}selected{% endif %}>{{ page_num }}</option>
+          {% endfor %}
+        </select>
+        <span class="text-ink-3">sur <span class="num">{{ logs.paginator.num_pages }}</span></span>
+        {% for key, value in filter_params.items %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+      </form>
     {% endif %}
-  </div>
+  {% else %}
+    <div class="carte vide">
+      <div class="vide-pastille">{% include "graphite/icone.html" with nom="document" only %}</div>
+      <p class="font-semibold text-ink">Aucun log de synchronisation trouvé.</p>
+      <p class="mt-1 text-sm text-ink-3">{% if filters.connection_id or filters.status or filters.sync_type or filters.date_from or filters.date_to %}Aucune synchronisation ne correspond à ces filtres.{% else %}Les synchronisations apparaîtront ici dès la première exécution.{% endif %}</p>
+      {% if filters.connection_id or filters.status or filters.sync_type or filters.date_from or filters.date_to %}
+        <a href="{% url 'sync_logs_list' %}" class="btn btn-secondaire mt-4">Réinitialiser les filtres</a>
+      {% endif %}
+    </div>
+  {% endif %}
 {% endblock %}

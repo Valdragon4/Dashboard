@@ -1,0 +1,31 @@
+{% load static %}<!doctype html>
+{% comment %}
+  Page hors coquille (connexion, inscription, invitation, erreurs) : même base
+  Graphite, sans barre latérale. Blocs : titre, contenu, scripts.
+{% endcomment %}
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block titre %}{% endblock %} — Finance</title>
+<link rel="stylesheet" href="{% static 'base/base.css' %}">
+<link rel="stylesheet" href="{% static 'base/composants.css' %}">
+<link rel="stylesheet" href="{% static 'finance/finance.css' %}">
+<script src="{% static 'base/vendor/tailwind.js' %}"></script>
+<script src="{% static 'base/base.js' %}"></script>
+<script src="{% static 'base/icones.js' %}" defer></script>
+</head>
+<body>
+<button type="button" class="btn btn-discret btn-icone page-seule-theme" data-action="theme" aria-label="Basculer le mode sombre">{% include "graphite/icone.html" with nom="lune" only %}</button>
+<main class="page-seule">
+  <div class="w-full {% block largeur %}max-w-md{% endblock %}">
+    <div class="page-seule-marque">
+      <span class="coquille-logo">{% include "graphite/icone.html" with nom="euro" only %}</span>
+      <span class="coquille-nom">Finance</span>
+    </div>
+    {% block contenu %}{% endblock %}
+  </div>
+</main>
+{% block scripts %}{% endblock %}
+</body>
+</html>

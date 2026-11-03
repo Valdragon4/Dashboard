@@ -1,5 +1,7 @@
 # Dashboard Financier
 
+Charte : Graphite, base du 2026-11-03 (interface : `backend/finance/static/base/`, copie de `personal-apps/base`).
+
 Application web Django pour gérer vos finances personnelles avec synchronisation automatique bancaire.
 
 ## Fonctionnalités

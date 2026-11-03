@@ -1,0 +1,66 @@
+{% comment %}
+  =====================================================================
+  Coquille Graphite — gabarit de base Django (outil finance)
+  Une page :
+
+    {% extends "graphite/coquille.html" %}
+    {% block titre %}Tableau de bord{% endblock %}
+    {% block navigation %}
+      {% url 'finance:dashboard' as u %}
+      {% include "graphite/nav_lien.html" with href=u icone="accueil" libelle="Tableau de bord" actif=True %}
+    {% endblock %}
+    {% block contenu %} … {% endblock %}
+
+  Contexte : app_nom, app_icone (ou surcharger les blocs app_nom / app_icone).
+  Statiques communs attendus sous STATIC « base/ » (copie de personal-apps/base).
+  =====================================================================
+{% endcomment %}{% load static %}<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block titre %}{% endblock %} — {% block app_nom_titre %}{{ app_nom|default:"Finance" }}{% endblock %}</title>
+<link rel="stylesheet" href="{% static 'base/base.css' %}">
+<link rel="stylesheet" href="{% static 'base/composants.css' %}">
+<script src="{% static 'base/vendor/tailwind.js' %}"></script>
+<script src="{% static 'base/base.js' %}"></script>
+<script src="{% static 'base/icones.js' %}" defer></script>
+{% block tete %}{% endblock %}
+</head>
+<body>
+
+<header class="coquille-haut">
+  <button type="button" class="btn btn-discret btn-icone" data-action="menu" aria-expanded="false" aria-controls="navigation" aria-label="Ouvrir le menu">{% include "graphite/icone.html" with nom="menu" only %}</button>
+  <span class="coquille-logo">{% block app_icone_haut %}{% include "graphite/icone.html" with nom=app_icone|default:"euro" only %}{% endblock %}</span>
+  <span class="coquille-nom">{% block app_nom_haut %}{{ app_nom|default:"Finance" }}{% endblock %}</span>
+</header>
+<div class="voile" data-action="fermer-menu" aria-hidden="true"></div>
+
+<aside class="coquille-side" id="navigation" aria-label="Navigation principale">
+  <div class="coquille-marque">
+    <span class="coquille-logo">{% block app_icone %}{% include "graphite/icone.html" with nom=app_icone|default:"euro" only %}{% endblock %}</span>
+    <span class="coquille-nom">{% block app_nom %}{{ app_nom|default:"Finance" }}{% endblock %}</span>
+    <button type="button" class="btn btn-discret btn-icone coquille-fermer" data-action="fermer-menu" aria-label="Fermer le menu">{% include "graphite/icone.html" with nom="fermer" only %}</button>
+  </div>
+  <nav class="coquille-nav">
+    {% block navigation %}{% endblock %}
+  </nav>
+  <div class="coquille-pied">
+    <button type="button" class="nav-lien" data-action="theme">{% include "graphite/icone.html" with nom="lune" only %}Mode sombre</button>
+    {% block pied %}{% endblock %}
+  </div>
+</aside>
+
+<main class="coquille-contenu">
+  <div class="conteneur">
+    {% if messages %}<div class="flex flex-col gap-2 mb-6">{% for m in messages %}
+      <div class="message message-{% if m.level_tag == 'error' %}crit{% elif m.level_tag == 'success' %}ok{% else %}info{% endif %}"{% if m.level_tag == 'error' %} role="alert"{% endif %}>
+        {% if m.level_tag == 'error' %}{% include "graphite/icone.html" with nom="crit" only %}{% elif m.level_tag == 'success' %}{% include "graphite/icone.html" with nom="ok" only %}{% else %}{% include "graphite/icone.html" with nom="info" only %}{% endif %}
+        <p class="flex-1">{{ m }}</p>
+      </div>{% endfor %}</div>{% endif %}
+    {% block contenu %}{% endblock %}
+  </div>
+</main>
+{% block scripts %}{% endblock %}
+</body>
+</html>

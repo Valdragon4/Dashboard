@@ -1,0 +1,1 @@
+{# Icône du sprite. Contexte : nom, classe (option), label (option : icône porteuse de sens). #}<svg{% if classe %} class="{{ classe }}"{% endif %}{% if label %} role="img" aria-label="{{ label }}"{% else %} aria-hidden="true"{% endif %}><use href="#i-{{ nom }}"/></svg>

@@ -1,74 +1,46 @@
 {% extends 'base.html' %}
 {% block title %}Authentification 2FA{% endblock %}
 {% block content %}
-  <div class="mb-8">
-    <div class="flex items-center gap-3 mb-2">
-      <a href="{% url 'bank_connections_list' %}" class="text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">
-        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
-        </svg>
-      </a>
-      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Authentification 2FA</h1>
+  <div class="page-entete">
+    <div class="flex items-start gap-2 min-w-0">
+      <a href="{% url 'bank_connections_list' %}" class="btn btn-discret btn-icone -ml-2 shrink-0" aria-label="Retour aux connexions">{% include "graphite/icone.html" with nom="retour" only %}</a>
+      <div>
+        <h1 class="page-titre">Authentification 2FA</h1>
+        <p class="page-sous-titre">Saisissez le code 2FA reçu par SMS pour compléter l'authentification.</p>
+      </div>
     </div>
-    <p class="text-gray-600 dark:text-gray-400 ml-9">Saisissez le code 2FA reçu par SMS pour compléter l'authentification</p>
   </div>
 
-  {% if messages %}
-    <div class="mb-6">
-      {% for message in messages %}
-        <div class="mb-3 p-4 rounded-lg {% if message.tags == 'error' %}bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-800 dark:text-red-300{% elif message.tags == 'success' %}bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-800 dark:text-green-300{% else %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300{% endif %}">
-          {{ message }}
-        </div>
-      {% endfor %}
-    </div>
-  {% endif %}
+  <section class="carte carte-corps sm:p-6 max-w-xl" aria-labelledby="t-connexion">
+    <h2 class="carte-titre" id="t-connexion">{{ connection.account_name }}</h2>
+    <p class="text-sm text-ink-3 mb-5">Provider : {{ connection.get_provider_display }}</p>
 
-  <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg border border-gray-200 dark:border-gray-700 p-8 max-w-xl">
-    <div class="mb-6">
-      <h2 class="text-xl font-semibold text-gray-900 dark:text-white mb-2">{{ connection.account_name }}</h2>
-      <p class="text-sm text-gray-600 dark:text-gray-400">Provider: {{ connection.get_provider_display }}</p>
-    </div>
-
-    <form method="post" class="space-y-6">
+    <form method="post" class="space-y-5">
       {% csrf_token %}
-      
       <div>
-        <label for="two_fa_code" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-          Code 2FA <span class="text-red-500">*</span>
-        </label>
-        <input type="text" 
-               name="two_fa_code" 
-               id="two_fa_code"
-               maxlength="10"
-               required
-               autocomplete="off"
-               class="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent text-center text-2xl tracking-widest"
-               placeholder="000000">
-        <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
-          💡 Entrez le code à 6 chiffres reçu par SMS sur votre téléphone.
-        </div>
+        <label for="two_fa_code" class="champ-libelle">Code 2FA <span class="text-ink-3">(obligatoire)</span></label>
+        <input type="text" name="two_fa_code" id="two_fa_code" maxlength="10" required autocomplete="off" inputmode="numeric"
+               class="champ num text-center text-2xl tracking-widest min-h-[3rem]" placeholder="000000" aria-describedby="code-aide">
+        <p class="champ-aide" id="code-aide">Entrez le code à 6 chiffres reçu par SMS sur votre téléphone.</p>
       </div>
-
-      <div class="flex gap-3">
-        <button type="submit" class="flex-1 px-6 py-3 bg-primary text-white rounded-lg font-medium hover:bg-primary-dark transition-colors shadow-sm">
-          ✓ Valider le code 2FA
-        </button>
+      <div class="flex flex-wrap gap-2">
+        <button type="submit" class="btn btn-principal">Valider le code 2FA</button>
         {% if connection.provider == 'trade_republic' %}
-        <form method="post" class="inline">
-          {% csrf_token %}
-          <input type="hidden" name="resend" value="true">
-          <button type="submit" class="px-6 py-3 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg font-medium hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors">
-            ⟳ Renvoyer le code
-          </button>
-        </form>
+        <button type="submit" form="renvoi-code" class="btn btn-secondaire">{% include "graphite/icone.html" with nom="actualiser" only %}Renvoyer le code</button>
         {% endif %}
       </div>
     </form>
+    {% if connection.provider == 'trade_republic' %}
+    {# Formulaire distinct : auparavant imbriqué, il rendait tout envoi équivalent à un renvoi de code. #}
+    <form method="post" id="renvoi-code" class="hidden">
+      {% csrf_token %}
+      <input type="hidden" name="resend" value="true">
+    </form>
+    {% endif %}
 
-    <div class="mt-6 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-      <p class="text-sm text-yellow-800 dark:text-yellow-300">
-        <strong>Note :</strong> Après validation du code 2FA, la synchronisation de votre compte démarrera automatiquement.
-      </p>
+    <div class="message message-info mt-6">
+      {% include "graphite/icone.html" with nom="info" only %}
+      <p class="flex-1">Après validation du code 2FA, la synchronisation de votre compte démarrera automatiquement.</p>
     </div>
-  </div>
+  </section>
 {% endblock %}
